@@ -126,6 +126,8 @@ resources:
                 - "## DATA QUALITY NOTES"
                 - "- La metric view ventas ya excluye cotizaciones y pedidos cancelados. No hace falta filtrar por estado."
                 - "- fact_inventory NO tiene fecha: es una foto del momento, no una serie histórica."
+                - "- Para comparar dos períodos, agrupá por período dentro de un CTE y pivoteá afuera. MEASURE() no puede ir dentro de un SUM(CASE ...)."
+                - "- No confundas Venta con Unidades: Venta son lempiras y Unidades son piezas. Al listar productos más vendidos, decí explícitamente cuál de las dos estás mostrando."
                 - ""
                 - "## Instructions you must follow when providing summaries"
                 - "- Los montos están en lempiras (HNL). Mostralos con separador de miles."
@@ -138,10 +140,15 @@ resources:
               question: ["¿Cómo van las ventas por zona?"]
               sql:
                 - "SELECT ventas.`Zona`, ventas.`Gerente`, MEASURE(ventas.`Pedidos`) AS pedidos, MEASURE(ventas.`Venta`) AS venta FROM ${var.catalog}.${var.gold_schema}.ventas GROUP BY ventas.`Zona`, ventas.`Gerente` ORDER BY venta DESC"
+            # Enseña la forma CTE-y-pivote, que es la ÚNICA válida para comparar
+            # dos períodos en una metric view: MEASURE() solo dentro del CTE, y
+            # el pivote afuera sobre columnas planas. Envolver MEASURE() en un
+            # SUM(CASE ...) no es válido y devuelve una fila por mes y año, que
+            # es lo que hacía que la comparación saliera mal.
             - id: "20000000000000000000000000000002"
               question: ["¿Cómo vamos contra el año pasado?"]
               sql:
-                - "SELECT ventas.`Mes` AS mes, SUM(CASE WHEN ventas.`Anio` = YEAR(current_date()) THEN MEASURE(ventas.`Venta`) END) AS venta_actual, SUM(CASE WHEN ventas.`Anio` = YEAR(current_date()) - 1 THEN MEASURE(ventas.`Venta`) END) AS venta_anterior FROM ${var.catalog}.${var.gold_schema}.ventas GROUP BY ventas.`Mes`, ventas.`Anio` ORDER BY mes"
+                - "WITH base AS (SELECT ventas.`Mes` AS mes, ventas.`Anio` AS anio, MEASURE(ventas.`Venta`) AS venta FROM ${var.catalog}.${var.gold_schema}.ventas WHERE ventas.`Anio` IN (YEAR(current_date()), YEAR(current_date()) - 1) GROUP BY ventas.`Mes`, ventas.`Anio`) SELECT mes, MAX(CASE WHEN anio = YEAR(current_date()) THEN venta END) AS venta_actual, MAX(CASE WHEN anio = YEAR(current_date()) - 1 THEN venta END) AS venta_anterior, ROUND(100.0 * (MAX(CASE WHEN anio = YEAR(current_date()) THEN venta END) - MAX(CASE WHEN anio = YEAR(current_date()) - 1 THEN venta END)) / NULLIF(MAX(CASE WHEN anio = YEAR(current_date()) - 1 THEN venta END), 0), 1) AS variacion_pct FROM base GROUP BY mes ORDER BY mes"
             - id: "20000000000000000000000000000003"
               question: ["¿Qué productos están en riesgo de quiebre?"]
               sql:
