@@ -295,9 +295,14 @@ Esta división es deliberada y está fundamentada, no es gusto:
 
 ### Metric View (la capa semántica)
 
-- **`synonyms` NO está soportado** en la versión YAML de este workspace: solo
-  `name`, `expr` y `window`. Probado. No hace falta, porque el `name` ya separa
-  la etiqueta de negocio del nombre físico.
+- **La versión del YAML importa: usar `version: 1.1`, no `0.1`.** La 0.1
+  rechaza `synonyms` con `Unrecognized field`; la 1.1 soporta `synonyms`,
+  `comment` y `format` (con `currency_code`). Databricks publicó un arreglo de
+  sinónimos en metric views el 13-ago-2026.
+- **Los sinónimos son el puente al español, y van acá.** Genie hace matching
+  contra los nombres, y el gerente no siempre dice "Zona": dice territorio,
+  región o equipo. Los sinónimos de la metric view quedan **versionados en el
+  repo**, a diferencia de los del Genie Agent, que viven solo en la UI.
 - **Las medidas se leen con `MEASURE()`**, nunca directo, y no pueden ir en
   `WHERE` ni en `GROUP BY`:
   `SELECT \`Zona\`, MEASURE(\`Venta\`) FROM ventas GROUP BY \`Zona\``

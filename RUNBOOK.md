@@ -333,8 +333,13 @@ Crear el agente sobre `gold.sales_metrics`, `gold.fact_sales`,
 deja de ser una ruleta.**
 
 Costo: Genie One y Genie Agents están gratis hasta el **31 de enero de 2027**
-para usuarios (los service principals sí se cobran). Lo único que consumís es
-el SQL warehouse.
+para usuarios (los service principals sí se cobran). Desde el 8-jul-2026 hay
+además un esquema pay-as-you-go con **150 DBU gratis al mes**. Lo único que
+consumís mientras tanto es el SQL warehouse.
+
+Ojo con el nombre: lo que antes eran "Genie Spaces" pasó a llamarse **Genie
+Agents** el 9-jul-2026, y "Genie" a secas es ahora **Genie One** desde el
+11-jun-2026.
 
 ---
 
@@ -353,9 +358,13 @@ Dashboard AI/BI sobre `gold.sales_metrics`. Mínimo:
 el dashboard sin tener cuenta de Databricks. Y se puede ocultar el logo de
 Databricks con la opción `hideDatabricksLogo`.
 
-El chat de Genie por iframe sigue en **Beta** y hay que habilitarlo en la página
-de Previews del workspace. Si querés algo estable para producción, las **Genie
-Conversation APIs** dejan meter el chat en tu propia página o en Slack/Teams.
+**Embeber el Genie Agent como iframe ya es GA** desde el 15-jun-2026, y el
+botón "Ask Genie" dentro de un dashboard también (9-jul-2026). O sea que no
+hace falta habilitar ningún Preview: el dashboard del bundle ya trae el botón.
+
+Si querés el chat en tu propia página o en Slack/Teams, las **Genie
+Conversation APIs** siguen siendo la vía, y desde el 27-ago-2026 las **Agent
+mode APIs** están en GA.
 
 ---
 

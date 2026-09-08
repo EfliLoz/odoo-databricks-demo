@@ -49,7 +49,7 @@ como reglas duras en [CLAUDE.md](CLAUDE.md) y resueltas en el código.
 | **La deriva de versiones se absorbe en el cargador** | Introspecciona `information_schema` y emite NULL para columnas que esa versión no tiene. Silver queda estable entre Odoo 17, 18 y 19 | El cargador es más complejo |
 | **Bronze aterriza todo como STRING** | El casteo es de Silver. Un cambio de tipo entre versiones no rompe la carga | Silver castea explícitamente |
 | **Gold como tablas, no materialized views** | Necesita constraints PK/FK: Genie los usa para inferir joins | Se sale del pipeline declarativo |
-| **Metric View como capa semántica** | El `name` es la etiqueta de negocio y el `expr` la columna física: esquema en inglés, vocabulario en español, **versionado en el repo** | Una capa más |
+| **Metric View como capa semántica** | El `name` es la etiqueta de negocio, el `expr` la columna física y los `synonyms` cubren cómo lo dice el usuario. Esquema en inglés, vocabulario en español, **versionado en el repo** y no en la UI | Una capa más |
 | **Identificadores en inglés, `COMMENT` en español** | Databricks no exige inglés, pero es lo estándar. Los `COMMENT` son el contexto principal de Genie y su doc pide el idioma del usuario | Hay que mantener las dos convenciones |
 
 ## El stack, como código
