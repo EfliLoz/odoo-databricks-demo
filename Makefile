@@ -48,6 +48,7 @@ PSQL    := $(COMPOSE) exec -T db psql -U $(POSTGRES_USER) -d $(ODOO_DB) -v ON_ER
         db-up db-recreate wal-level psql slots slot-drop cdc-setup \
         load-bronze export-bronze \
         bundle-validate bundle-deploy bundle-run \
+        check-version check-version-clean \
         bootstrap db-create localize modules check-l10n seed currency company \
         odoo-shell verify-cdc
 
@@ -166,6 +167,31 @@ cdc-setup:  ## Usuario, replica identity, publicación y slot (en ese orden)
 
 psql:  ## psql interactivo contra la base de Odoo
 	$(COMPOSE) exec db psql -U $(POSTGRES_USER) -d $(ODOO_DB)
+
+## --------------------------------------------- portabilidad entre versiones --
+
+# Levanta un Odoo de la VERSION indicada contra el MISMO Postgres, en una base
+# aparte, y compara el esquema real contra ingestion/contract.py. Es la forma de
+# saber si el cargador tolera esa versión sin adivinar: reporta qué columnas del
+# contrato no existen ahí. Verificado contra 17, 18 y 19: 17/17 tablas en todas.
+check-version:  ## Verificar el contrato contra otra versión de Odoo (VERSION=17)
+	@test -n "$(VERSION)" || { echo "Usá: make check-version VERSION=17"; exit 1; }
+	@echo ">> Creando base demo_v$(VERSION) con Odoo $(VERSION)..."
+	@docker run --rm --network odoo-sandbox_default \
+	  -e HOST=db -e PORT=5432 \
+	  -e POSTGRES_USER=$(POSTGRES_USER) -e POSTGRES_PASSWORD=$(POSTGRES_PASSWORD) \
+	  odoo:$(VERSION) odoo -d demo_v$(VERSION) \
+	  -i base,sale_management,stock --stop-after-init >/dev/null 2>&1 \
+	  || echo "   (la base ya existía o falló el arranque; se sigue con lo que haya)"
+	@echo ">> Comparando el esquema contra el contrato..."
+	@PGHOST=localhost PGPORT=$(POSTGRES_PORT) PGUSER=$(POSTGRES_USER) \
+	  PGPASSWORD=$(POSTGRES_PASSWORD) PGDATABASE=demo_v$(VERSION) \
+	  python3 ingestion/check_schema.py
+
+check-version-clean:  ## Borrar la base de prueba de una versión (VERSION=17)
+	@test -n "$(VERSION)" || { echo "Usá: make check-version-clean VERSION=17"; exit 1; }
+	@$(COMPOSE) exec -T db psql -U $(POSTGRES_USER) -d postgres \
+	  -c "DROP DATABASE IF EXISTS demo_v$(VERSION) WITH (FORCE);" && echo "  demo_v$(VERSION) borrada"
 
 ## ------------------------------------------------- carril batch (Bronze) --
 

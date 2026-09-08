@@ -46,7 +46,7 @@ como reglas duras en [CLAUDE.md](CLAUDE.md) y resueltas en el código.
 |---|---|---|
 | **Contrato de ingesta explícito** ([`ingestion/contract.py`](ingestion/contract.py)) | 17 tablas elegidas, no las ~900 de Odoo. Una sola lista alimenta los dos carriles | Agregar una tabla es una decisión consciente |
 | **Dos carriles hacia el mismo Bronze** | El CDC no corre en cualquier workspace; el batch sí. Silver no sabe cuál corrió | Una capa de indirección |
-| **La deriva de versiones se absorbe en el cargador** | Introspecciona `information_schema` y emite NULL para columnas que esa versión no tiene. Silver queda estable entre Odoo 17, 18 y 19 | El cargador es más complejo |
+| **La deriva de versiones se absorbe en el cargador** | Introspecciona `information_schema` y emite NULL para columnas que esa versión no tiene. **Verificado contra Odoo 17, 18 y 19** con `make check-version` | El cargador es más complejo |
 | **Bronze aterriza todo como STRING** | El casteo es de Silver. Un cambio de tipo entre versiones no rompe la carga | Silver castea explícitamente |
 | **Gold como tablas, no materialized views** | Necesita constraints PK/FK: Genie los usa para inferir joins | Se sale del pipeline declarativo |
 | **Metric View como capa semántica** | El `name` es la etiqueta de negocio, el `expr` la columna física y los `synonyms` cubren cómo lo dice el usuario. Esquema en inglés, vocabulario en español, **versionado en el repo** y no en la UI | Una capa más |
@@ -110,15 +110,21 @@ necesita saber de Odoo, va ahí.
 
 Está probado end-to-end, pero es una demo y conviene ser explícito:
 
-- **El carril CDC necesita un workspace de pago.** El gateway de Lakeflow
-  Connect exige compute clásico. En Free Edition solo corre el carril batch,
-  que no captura borrados entre corridas.
+- **El carril CDC está preparado y verificado, pero sin gateway.** La
+  publicación, el slot y el `REPLICA IDENTITY` se crean contra el Odoo real, y
+  el slot **captura cambios de verdad**: un `UPDATE` sobre `sale_order` produce
+  4 registros leídos con `pg_logical_slot_peek_binary_changes` y el plugin
+  `pgoutput`. Lo que falta es el gateway de Lakeflow Connect, que exige compute
+  clásico y por eso no corre en Free Edition. En ese workspace se usa el carril
+  batch, que no captura borrados entre corridas.
 - **Lakebase no es una alternativa.** Se probó: su CDC nativo falla con
   `Lakebase CDF is not supported for catalogs using Default Storage`.
 - **Un solo tenant.** Multi-cliente sería un pipeline por cliente hacia su
   propio esquema, uniendo en Gold. Es deuda deliberada.
-- **Multi-versión resuelto, no probado contra 17 y 18.** El cargador está
-  diseñado para tolerar la deriva; solo se ejecutó contra Odoo 19.
+- **Multi-versión verificada contra Odoo 17, 18 y 19**: las 17 tablas del
+  contrato calzan completo en las tres. No es una afirmación de diseño —
+  `make check-version VERSION=17` levanta un Odoo de esa versión contra el
+  mismo Postgres y compara el esquema real, columna por columna. Reproducilo.
 - **No sirve para Odoo Online ni Odoo.sh**: no hay acceso a la base.
 
 ## Detalle

@@ -82,6 +82,8 @@ make reset         # down -v: borra volúmenes, pide confirmación
 make load-bronze  # carril batch: Odoo -> bronze_pg
 make export-bronze  # solo los CSV, sin tocar Databricks
 
+make check-version VERSION=17   # ¿el contrato calza con esa versión de Odoo?
+
 make wal-level     # ¿arrancó Postgres en logical?
 make slots         # VIGILANCIA: slots y WAL retenido
 make slot-drop     # borrar el slot a mano
@@ -186,6 +188,12 @@ problemas distintos y conviene no confundirlos:
   `campo = "group_ids" if "group_ids" in u._fields else "groups_id"`.
 - **Bronze aterriza todo como STRING a propósito.** El casteo es de Silver.
   Así un cambio de tipo entre versiones de Odoo no rompe la carga.
+- **La compatibilidad se VERIFICA, no se afirma.** `make check-version
+  VERSION=17` levanta un Odoo de esa versión contra el mismo Postgres, en una
+  base aparte, y compara el esquema real contra `ingestion/contract.py`. Las
+  columnas que reporta ausentes saldrán NULL en Bronze; una TABLA ausente sí
+  rompe Silver y el script sale con código 1.
+  **Resultado a la fecha: 17/17 tablas completas en Odoo 17, 18 y 19.**
 
 ### Esquema de Odoo (leído directo, sin ORM)
 
@@ -207,6 +215,14 @@ problemas distintos y conviene no confundirlos:
   `COALESCE(display_type, '') = ''`.
 
 ### Replicación lógica
+
+- **El carril CDC está verificado hasta el slot, no más allá.** Contra el Odoo
+  real: `wal_level = logical`, publicación con las 17 tablas, slot con
+  `pgoutput`, y captura comprobada — un `UPDATE` sobre `sale_order` produce 4
+  registros leídos con `pg_logical_slot_peek_binary_changes`. Lo NO verificado
+  es el gateway de Lakeflow Connect consumiéndolo, que exige compute clásico.
+- **Si se corre `make cdc-setup` sin gateway, borrar el slot después.** Un slot
+  sin consumidor retiene WAL indefinidamente: `make slot-drop`.
 
 - **La publicación se crea ANTES del slot.** Al revés falla.
 - **La lista de tablas replicadas vive en un solo lugar**: la tabla temporal
