@@ -21,7 +21,7 @@ resources:
         vendedores, productos más vendidos, cobertura por departamento y riesgo
         de quiebre de stock.
       warehouse_id: ${var.warehouse_id}
-      parent_path: /Workspace/Users/efli95.ealc@gmail.com/genie
+      parent_path: /Workspace/Users/${workspace.current_user.userName}/genie
 
       serialized_space:
         version: 2

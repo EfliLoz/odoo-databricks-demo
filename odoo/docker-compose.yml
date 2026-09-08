@@ -26,8 +26,13 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-postgres}
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
     ports:
-      # Restringir por security group al rango de Databricks. Nunca a internet.
-      - "${POSTGRES_PORT:-5432}:5432"
+      # Enlaza a loopback POR DEFECTO. Sin el prefijo de dirección, Docker
+      # publica en 0.0.0.0 y cualquiera en la misma red llega al Postgres con
+      # las credenciales del sandbox. Para exponerlo (la EC2 donde el gateway
+      # de Lakeflow Connect tiene que alcanzar el 5432) hay que pedirlo
+      # explícitamente con BIND_ADDRESS=0.0.0.0 en odoo/.env, y ahí sí
+      # restringir por security group al rango de Databricks. Nunca a internet.
+      - "${BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
@@ -52,8 +57,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-odoo}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-odoo_dev}
     ports:
-      # Restringir por security group solo a tu IP.
-      - "${ODOO_PORT:-8069}:8069"
+      # Mismo criterio: loopback por defecto. Odoo trae admin/admin en la demo
+      # data, así que exponerlo sin querer es entregar la base entera.
+      - "${BIND_ADDRESS:-127.0.0.1}:${ODOO_PORT:-8069}:8069"
     volumes:
       - odoo-data:/var/lib/odoo
       - ./config/odoo.conf:/etc/odoo/odoo.conf:ro

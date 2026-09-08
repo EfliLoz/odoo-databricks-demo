@@ -85,9 +85,18 @@ make bootstrap     # Postgres + Odoo 19 + moneda HNL + módulos
 make seed          # ~580 pedidos en 18 meses, 4 zonas, inventario
 make load-bronze   # carril batch: las 17 tablas → bronze_pg
 
+make bundle-vars   # detecta tu SQL warehouse (no hay ids en el repo)
 make bundle-deploy # pipeline + gold + metric view + dashboard + agente
 make bundle-run
 ```
+
+El repo no lleva ningún identificador de workspace: el host sale de tu perfil
+del CLI, los paths usan `${workspace.current_user.userName}` y el warehouse lo
+detecta `make bundle-vars`. Clonalo y desplegalo contra el tuyo.
+
+Los contenedores escuchan en `127.0.0.1` por defecto. Odoo trae `admin/admin`
+en su demo data, así que exponerlo a la red se pide explícitamente con
+`BIND_ADDRESS=0.0.0.0`.
 
 `make help` lista los 30 targets. Cada uno encapsula algo que se rompe fácil —
 el `-T` obligatorio de `odoo shell`, el orden localización→módulos, el orden

@@ -47,7 +47,7 @@ PSQL    := $(COMPOSE) exec -T db psql -U $(POSTGRES_USER) -d $(ODOO_DB) -v ON_ER
 .PHONY: help env up down ps logs restart reset \
         db-up db-recreate wal-level psql slots slot-drop cdc-setup \
         load-bronze export-bronze \
-        bundle-validate bundle-deploy bundle-run \
+        bundle-vars bundle-validate bundle-deploy bundle-run \
         check-version check-version-clean \
         bootstrap db-create localize modules check-l10n seed currency company \
         odoo-shell verify-cdc
@@ -207,7 +207,21 @@ export-bronze:  ## Solo exportar los .jsonl, sin tocar Databricks (depuración)
 # targets entran a ese directorio. El CLI busca databricks.yml hacia arriba
 # desde el cwd, no acepta una ruta al archivo.
 
-bundle-validate:  ## Validar el bundle en modo estricto
+# warehouse_id es un id de TU workspace: no tiene default en databricks.yml a
+# propósito, para que el repo no publique infraestructura de nadie. Este target
+# lo detecta y lo deja en .databricks/, que está fuera de git.
+bundle-vars:  ## Detectar el SQL warehouse y escribir los overrides del bundle
+	@mkdir -p databricks/.databricks/bundle/$(TARGET)
+	@wid=$$(databricks warehouses list --profile $(DATABRICKS_PROFILE) -o json \
+	         | python3 -c "import sys,json; w=json.load(sys.stdin); print(w[0]['id'] if w else '')"); \
+	 if [ -z "$$wid" ]; then \
+	   echo "ERROR: no hay ningún SQL warehouse en el workspace."; exit 1; \
+	 fi; \
+	 printf '{\n  "warehouse_id": "%s"\n}\n' "$$wid" \
+	   > databricks/.databricks/bundle/$(TARGET)/variable-overrides.json; \
+	 echo "  warehouse_id=$$wid -> databricks/.databricks/bundle/$(TARGET)/variable-overrides.json"
+
+bundle-validate: bundle-vars  ## Validar el bundle en modo estricto
 	cd databricks && databricks bundle validate --strict \
 	  --target $(TARGET) --profile $(DATABRICKS_PROFILE)
 

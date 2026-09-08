@@ -379,8 +379,16 @@ Esta división es deliberada y está fundamentada, no es gusto:
 - **No generalizar a multi-tenant todavía.** Es deuda deliberada: se hace
   cuando aparezca el segundo cliente y muestre en qué se diferencia.
   La multi-**versión** sí es requisito y ya está resuelta en el cargador.
-- **No exponer el 5432 a internet.** Security group restringido al rango de
-  Databricks.
+- **No exponer el 5432 a internet.** El compose enlaza a `127.0.0.1` por
+  defecto; para exponerlo hay que pedirlo con `BIND_ADDRESS=0.0.0.0` en
+  `odoo/.env`, y ahí sí restringir por security group al rango de Databricks.
+  Sin ese default, Docker publica en `0.0.0.0` y cualquiera en la misma red
+  llega al Postgres con `odoo/odoo_dev` y a Odoo con `admin/admin`.
+- **No poner identificadores del workspace en el repo.** Ni la URL del
+  workspace, ni el correo, ni el `warehouse_id`. El host lo aporta el perfil
+  del CLI, los paths usan `${workspace.current_user.userName}`, y el warehouse
+  sale de `make bundle-vars`, que lo escribe en `databricks/.databricks/`
+  (fuera de git). El repo es público.
 
 ## Glosario del dominio
 

@@ -39,26 +39,28 @@ variables:
     default: HNL
   warehouse_id:
     description: >-
-      SQL warehouse para las tareas de Gold y Genie. Gold no puede ir en el
-      pipeline declarativo porque necesita constraints PK/FK, que las
-      materialized views no admiten. En otro workspace se cambia acá o se pasa
-      con --var warehouse_id=...
-    default: "7725495009f0b0d6"
+      SQL warehouse para las tareas de Gold, la metric view y Genie. Gold no
+      puede ir en el pipeline declarativo porque necesita constraints PK/FK,
+      que las materialized views no admiten.
+      Sale de `databricks warehouses list`. NO tiene default a propósito: es un
+      id de tu workspace y no pertenece a un repo público. Ponelo en
+      databricks/.databricks-vars.json o pasalo con
+      --var warehouse_id=<id>.
 
 targets:
   dev:
     mode: development
     default: true
-    workspace:
-      host: https://dbc-63e94b04-1837.cloud.databricks.com
+    # Sin `workspace.host`: lo aporta el perfil del CLI (--profile). Así el
+    # repo no publica la URL de un workspace concreto y cualquiera puede
+    # clonarlo y desplegarlo contra el suyo.
     variables:
       silver_schema: silver_dev
       gold_schema: gold_dev
 
   prod:
     mode: production
-    workspace:
-      host: https://dbc-63e94b04-1837.cloud.databricks.com
     permissions:
       - level: CAN_MANAGE
-        user_name: efli95.ealc@gmail.com
+        # El usuario que despliega, sea quien sea.
+        user_name: ${workspace.current_user.userName}

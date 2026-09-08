@@ -1,7 +1,10 @@
 # Secretos: odoo/.env lleva las credenciales reales del sandbox.
 # El que se versiona es odoo/.env.example, con valores de juguete.
+# Cualquier variante: .env.local, .env.prod, odoo/.env.staging...
 .env
+.env.*
 odoo/.env
+odoo/.env.*
 !odoo/.env.example
 
 # Addons montados en el contenedor: la carpeta se versiona, su contenido no.
@@ -24,6 +27,11 @@ venv/
 # Estado local del bundle (lo genera el CLI)
 databricks/.databricks/
 .databricks/
+
+# Artefactos de herramientas
+.playwright-mcp/
+.claude/
+.ai-dev-kit/
 
 # Editores y SO
 .vscode/
