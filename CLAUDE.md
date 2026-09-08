@@ -36,9 +36,10 @@ odoo/                 EL SANDBOX — nada de Databricks acá dentro
 
 databricks/           EL BUNDLE — nada de Odoo acá dentro
   databricks.yml        variables y targets dev/prod. Es el bundle root.
-  resources/            medallion.pipeline.yml, medallion.job.yml
+  resources/            pipeline, job, dashboard y genie space
   src/pipeline/         Silver, como materialized views
   src/sql/              00_setup, 01_gold, 02_metrics, 03_genie (tareas del job)
+  src/dashboards/       ventas.lvdash.json (con el botón "Ask Genie" adentro)
 
 ingestion/              EL PUENTE — lo único que toca los dos lados
   contract.py           QUÉ se extrae de Odoo: fuente única de las 17 tablas
@@ -257,6 +258,24 @@ Esta división es deliberada y está fundamentada, no es gusto:
 - **Los datos siguen en español** pase lo que pase: "Zona Norte", los
   departamentos hondureños, los nombres de vendedores. Eso es contenido, no
   esquema.
+
+### Todo es un recurso del bundle
+
+- **El dashboard y el Genie Agent NO se crean a mano.** Los dos son recursos de
+  Declarative Automation Bundles (`dashboards` y `genie_spaces`), así que viven
+  versionados y se despliegan con `make bundle-deploy` junto al pipeline. Lo
+  configurado por UI se pierde si alguien recrea el objeto y no se puede
+  revisar en un pull request.
+- **Las claves de recurso no se pueden repetir entre tipos.** El CLI falla con
+  `multiple resources or scripts have been defined with the same key`. Por eso
+  el pipeline es `medallion_silver` (el job es `medallion`) y el dashboard es
+  `ventas_dashboard` (el genie space es `ventas`).
+- **El enlace dashboard → agente va por referencia de recurso**, no por id
+  fijo: `uiSettings.genieSpace.overrideId` usa
+  `${resources.genie_spaces.ventas.id}`, así el dashboard de cada target abre
+  el agente de ese mismo target.
+- **El `serialized_space` del agente va inline en YAML**, no en un
+  `.geniespace.json` aparte, para que las variables del bundle interpolen.
 
 ### Metric View (la capa semántica)
 
