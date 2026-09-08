@@ -1,0 +1,8 @@
+# Normalizar finales de línea: el repo se edita en Linux pero el .sql puede
+# terminar pegado en un notebook desde Windows.
+* text=auto eol=lf
+
+# GitHub clasifica el repo por lenguaje; sin esto el .lvdash.json (un artefacto
+# generado, no código escrito a mano) domina las estadísticas.
+databricks/src/dashboards/*.json linguist-generated=true
+*.sql linguist-detectable=true

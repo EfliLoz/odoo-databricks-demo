@@ -63,11 +63,11 @@ Clonar el repo en la instancia y preparar las credenciales:
 
 ```bash
 git clone <repo> ~/odoo-databricks-demo && cd ~/odoo-databricks-demo
-make env          # crea infra/.env a partir de infra/.env.example
-$EDITOR infra/.env
+make env          # crea odoo/.env a partir de odoo/.env.example
+$EDITOR odoo/.env
 ```
 
-`infra/.env` lleva las credenciales de Postgres, los puertos publicados y —
+`odoo/.env` lleva las credenciales de Postgres, los puertos publicados y —
 importante para la Fase 4 — el password del usuario de replicación. No se
 versiona. Todo lo demás tiene valores por defecto en el compose, así que el
 sandbox levanta aunque no lo edites; en la EC2 sí conviene cambiarlo.
@@ -93,17 +93,27 @@ Eso encadena los cuatro pasos que **tienen que ir en este orden**:
 | Paso | Target | Qué hace |
 |---|---|---|
 | 1 | `db-up` | levanta Postgres y espera a que esté `healthy` |
-| 2 | `db-create` | crea la base con demo data e idioma es_ES, **sin contabilidad** |
-| 3 | `localize` | fija país Honduras y moneda HNL (`odoo/localize_hn.py`) |
-| 4 | `account` | instala contabilidad, que ya agarra la localización del país |
+| 2 | `db-create` | crea la base con `--with-demo`, **solo el módulo `base`** |
+| 3 | `localize` | fija país Honduras y moneda HNL (`odoo/scripts/localize_hn.py`) |
+| 4 | `modules` | instala la localización (`l10n_hn`) y luego ventas e inventario |
 
-El paso 3 **antes** del 4 no es negociable: sin país configurado, `account`
-cae en `l10n_generic_coa` (US) y te quedás en dólares. Y la moneda de la
-compañía no se puede cambiar una vez que hay asientos contables — si te
-equivocás, `make reset` y volver a empezar.
+Tres cosas que cuestan una tarde si no se saben:
 
-Cada paso también corre suelto (`make db-create`, `make localize`, …) si algo
-falla a la mitad y querés retomar.
+- **Desde Odoo 19 la demo data NO se instala por defecto.** `--without-demo` es
+  el default. Sin `--with-demo`, `product_template` queda en 0 y el seed muere
+  sin productos que vender.
+- **`sale_management` arrastra `account` como dependencia.** Si se instala en
+  el paso 2, la demo data de contabilidad crea asientos y en el paso 3 la
+  moneda ya no se puede cambiar. Por eso el paso 2 instala **solo `base`**.
+- **Con demo data terminás con tres compañías, y no se puede evitar.** El demo
+  de `account` renombra la principal, le aplica `generic_coa` en USD, y crea
+  una por cada localización instalada. Instalar `l10n_hn` primero tampoco lo
+  evita: se probó. La compañía que queda en HNL nace **sin almacén**, y sin
+  almacén no hay `stock_quant` que mostrar. De eso se encarga `make company`,
+  del que depende `make seed`.
+
+Cada paso corre suelto (`make db-create`, `make localize`, …) si algo falla a
+la mitad y querés retomar.
 
 Verificar si existe localización hondureña:
 
@@ -112,7 +122,8 @@ make check-l10n
 ```
 
 Si existe, instalarlo con `-i l10n_hn` en vez de `account` y trae plan de
-cuentas e impuestos hondureños. Si no existe, `make account` tal cual deja el
+cuentas e impuestos hondureños. Si no existe, `make modules` cae en `account`
+y deja el
 plan genérico pero en lempiras y con el país correcto: para la demo alcanza.
 
 Entrar a `http://<ip>:8069` con `admin` / `admin` y confirmar que hay productos
@@ -130,8 +141,21 @@ y ~900 pedidos con estacionalidad en 18 meses.
 make seed
 ```
 
+`seed` depende de `company`, que corre solo antes: toma la compañía de la
+moneda de la demo, le crea el almacén que le falta y la deja como compañía por
+defecto del admin. Sin ese paso el seed cae en la compañía en dólares.
+
+**Verificá la moneda antes de dar la demo por buena:**
+
+```bash
+make currency     # tiene que mostrar la compañía del seed en HNL
+```
+
+579 pedidos en USD se ven idénticos a 579 en HNL hasta que alguien mira el
+dashboard delante del cliente.
+
 Por debajo es `docker compose run --rm -T odoo odoo shell -d demo --no-http <
-odoo/seed_ventas.py`. **El `-T` es obligatorio.** Sin él compose no conecta el
+odoo/scripts/seed_sales.py`. **El `-T` es obligatorio.** Sin él compose no conecta el
 stdin y el script nunca entra — por eso conviene usar el target y no escribirlo
 a mano.
 
@@ -172,12 +196,41 @@ Publica 17 tablas, no las ~900 de Odoo. El resto es plomería del ORM
 (`ir_*`, `mail_*`, tablas de relación m2m sin llave primaria) que solo infla
 el WAL. Databricks recomienda 250 tablas o menos por pipeline.
 
-El password sale de `REPL_PASSWORD` en `infra/.env`, no está quemado en el
+El password sale de `REPL_PASSWORD` en `odoo/.env`, no está quemado en el
 `.sql`. `make cdc-setup` se niega a correr mientras siga en el valor de ejemplo.
 
 ---
 
-## Fase 5 — Lakeflow Connect
+## Fase 4b — Elegir carril de ingesta
+
+Los dos carriles llenan el mismo contrato (`ingestion/contract.py`) y Silver no
+sabe cuál corrió.
+
+| Carril | Cuándo | Requisitos |
+|---|---|---|
+| `cdc` | prospectos reales | workspace **de pago** (el gateway exige compute clásico), acceso al Public Preview, y alcanzar el 5432 |
+| `batch` | la demo en Free Edition | nada: `psql` + el CLI de `databricks` |
+
+**En un workspace Free Edition solo corre `batch`.** Free Edition es
+serverless-only y el gateway de Lakeflow Connect necesita compute clásico.
+Lakebase tampoco es salida: su CDC nativo falla con *"Lakebase CDF is not
+supported for catalogs using Default Storage"*, y Free Edition solo tiene
+default storage.
+
+```bash
+make load-bronze     # Odoo -> bronze_pg, las 17 tablas
+```
+
+El cargador introspecciona el esquema del Odoo origen, así que tolera 17, 18 y
+19: las columnas del contrato que esa versión no tenga salen como NULL.
+
+Lo que se pierde frente al CDC: no captura borrados entre corridas y no es
+continuo. Para la demo alcanza — recargar son segundos, así que el momento
+"creo un pedido y aparece en el dashboard" se conserva.
+
+---
+
+## Fase 5 — Lakeflow Connect (solo carril `cdc`)
 
 **Conexión.** Catalog → External Data → Connections → Create, tipo PostgreSQL.
 Host, puerto 5432, base `demo`, credenciales de `databricks_replication`.
@@ -215,14 +268,26 @@ make verify-cdc
 
 ## Fase 6 — Silver y Gold
 
-```
-databricks/01_silver.sql   → tipado, jsonb, joins del ORM
-databricks/02_gold.sql     → estrella + comentarios + constraints
+Ya no se corren `.sql` sueltos: todo va por el bundle, y el orden es una
+dependencia declarada en `databricks/resources/medallion.job.yml`.
+
+```bash
+databricks bundle validate --strict --target dev --profile FREE
+databricks bundle deploy            --target dev --profile FREE
+databricks bundle run medallion     --target dev --profile FREE
 ```
 
-Correr **en orden numérico** en un notebook SQL: `02` consume las vistas que
-crea `01`. Cada archivo declara en su encabezado qué consume, qué produce y
-qué hay que ajustar (el catálogo `odoo_demo`, el esquema `bronze_pg`).
+El job encadena cuatro tareas: `setup` (esquemas y la función `silver.txt`) →
+`silver` (el pipeline declarativo, 7 materialized views) → `gold` (las tablas
+del modelo estrella) → `genie` (los trusted assets).
+
+**Por qué Gold no está en el pipeline.** Necesita constraints PK/FK, y las
+materialized views no los admiten. Genie los usa para inferir joins, así que
+Gold va como tarea SQL. Es una desviación consciente de la recomendación
+genérica de Databricks, anotada en `databricks/src/sql/01_gold.sql`.
+
+El catálogo y los esquemas son variables del bundle (`databricks.yml`), no
+están quemados en el SQL: `dev` escribe en `silver_dev`/`gold_dev`.
 
 ### Las cuatro trampas del esquema de Odoo
 
@@ -249,16 +314,16 @@ Agents**, y **Genie One** es la interfaz donde el usuario de negocio consume
 dashboards, agentes y apps.
 
 ```
-databricks/03_genie.sql    → siete trusted assets + el bloque de Instructions
+databricks/src/sql/03_genie.sql    → siete trusted assets + el bloque de Instructions
 ```
 
-Crear el agente sobre `gold.metricas_ventas`, `gold.fct_ventas`,
-`gold.fct_inventario` y las cuatro dimensiones. Después:
+Crear el agente sobre `gold.sales_metrics`, `gold.fact_sales`,
+`gold.fact_inventory` y las cuatro dimensiones. Después:
 
-1. **Instrucciones** — copiar el bloque comentado al final de `databricks/03_genie.sql`.
+1. **Instrucciones** — copiar el bloque comentado al final de `databricks/src/sql/03_genie.sql`.
    Cortas y específicas. Nunca para tapar metadata faltante: si se resuelve con
    un `COMMENT` en la columna, va en el `COMMENT`.
-2. **Trusted assets** — agregar las siete funciones de `databricks/03_genie.sql`.
+2. **Trusted assets** — agregar las siete funciones de `databricks/src/sql/03_genie.sql`.
    Cuando Genie las usa, la respuesta sale con etiqueta **"Trusted"**, que es
    una señal de confianza que el usuario no técnico no puede obtener leyendo
    el SQL generado.
@@ -268,14 +333,19 @@ Crear el agente sobre `gold.metricas_ventas`, `gold.fct_ventas`,
 deja de ser una ruleta.**
 
 Costo: Genie One y Genie Agents están gratis hasta el **31 de enero de 2027**
-para usuarios (los service principals sí se cobran). Lo único que consumís es
-el SQL warehouse.
+para usuarios (los service principals sí se cobran). Desde el 8-jul-2026 hay
+además un esquema pay-as-you-go con **150 DBU gratis al mes**. Lo único que
+consumís mientras tanto es el SQL warehouse.
+
+Ojo con el nombre: lo que antes eran "Genie Spaces" pasó a llamarse **Genie
+Agents** el 9-jul-2026, y "Genie" a secas es ahora **Genie One** desde el
+11-jun-2026.
 
 ---
 
 ## Fase 8 — Dashboard y la página
 
-Dashboard AI/BI sobre `gold.metricas_ventas`. Mínimo:
+Dashboard AI/BI sobre `gold.sales_metrics`. Mínimo:
 
 - KPI: venta del mes, variación contra año anterior, pedidos, ticket promedio
 - Línea: venta mensual, dos años superpuestos
@@ -288,9 +358,13 @@ Dashboard AI/BI sobre `gold.metricas_ventas`. Mínimo:
 el dashboard sin tener cuenta de Databricks. Y se puede ocultar el logo de
 Databricks con la opción `hideDatabricksLogo`.
 
-El chat de Genie por iframe sigue en **Beta** y hay que habilitarlo en la página
-de Previews del workspace. Si querés algo estable para producción, las **Genie
-Conversation APIs** dejan meter el chat en tu propia página o en Slack/Teams.
+**Embeber el Genie Agent como iframe ya es GA** desde el 15-jun-2026, y el
+botón "Ask Genie" dentro de un dashboard también (9-jul-2026). O sea que no
+hace falta habilitar ningún Preview: el dashboard del bundle ya trae el botón.
+
+Si querés el chat en tu propia página o en Slack/Teams, las **Genie
+Conversation APIs** siguen siendo la vía, y desde el 27-ago-2026 las **Agent
+mode APIs** están en GA.
 
 ---
 
@@ -391,15 +465,20 @@ todavía no.
 | Archivo | Fase | Cómo se corre |
 |---|---|---|
 | `Makefile` | todas | `make help` |
-| `infra/docker-compose.yml` | 1 | EC2 |
-| `infra/.env.example` | 1 | `make env` → `infra/.env` |
-| `infra/config/odoo.conf` | 1 | montado en el contenedor |
-| `odoo/localize_hn.py` | 2 | `make localize` |
-| `odoo/seed_ventas.py` | 3 | `make seed` |
-| `postgres/lakeflow_setup.sql` | 4 | `make cdc-setup` |
-| `databricks/01_silver.sql` | 6 | notebook Databricks |
-| `databricks/02_gold.sql` | 6 | notebook Databricks |
-| `databricks/03_genie.sql` | 7 | notebook Databricks |
+| `odoo/docker-compose.yml` | 1 | EC2 o local |
+| `odoo/.env.example` | 1 | `make env` → `odoo/.env` |
+| `odoo/scripts/localize_hn.py` | 2 | `make localize` |
+| `odoo/scripts/seed_sales.py` | 3 | `make seed` |
+| `ingestion/contract.py` | 4b | lo importan los dos carriles |
+| `ingestion/cdc/lakeflow_setup.sql` | 4 | `make cdc-setup` (carril `cdc`) |
+| `ingestion/batch/load_bronze.py` | 4b | `make load-bronze` (carril `batch`) |
+| `odoo/scripts/prepare_company.py` | 3 | `make company` (lo llama `seed`) |
+| `databricks/databricks.yml` | 6 | `make bundle-deploy` |
+| `databricks/resources/*.yml` | 6 | job y pipeline del bundle |
+| `databricks/src/pipeline/*.sql` | 6 | tarea `silver` del job |
+| `databricks/src/sql/00_setup.sql` | 6 | tarea `setup` |
+| `databricks/src/sql/01_gold.sql` | 6 | tarea `gold` |
+| `databricks/src/sql/03_genie.sql` | 7 | tarea `genie` |
 
 Los scripts del carril por API (`odoo_probe.py`, `odoo_extract.py`) no están en
 este repo — ver *Fuera del alcance de la demo*.

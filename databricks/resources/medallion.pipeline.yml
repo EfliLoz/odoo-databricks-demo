@@ -1,0 +1,27 @@
+# Silver como pipeline declarativo (Lakeflow Spark Declarative Pipelines).
+#
+# Por qué Silver sí y Gold no: Silver son transformaciones puras sobre Bronze,
+# que es justo lo que una materialized view hace bien —refresco incremental,
+# linaje y expectativas de calidad. Gold necesita constraints PK/FK porque
+# Genie los usa para inferir joins, y las MV no los admiten: va como tarea SQL.
+
+resources:
+  pipelines:
+    # La clave NO puede repetirse con la del job: son espacios de nombres
+    # distintos en el YAML pero el CLI no admite claves duplicadas entre tipos.
+    medallion_silver:
+      name: odoo_medallion_silver
+      catalog: ${var.catalog}
+      schema: ${var.silver_schema}
+      serverless: true
+      # Free Edition es serverless-only; esto no es opcional acá.
+      libraries:
+        - glob:
+            include: ../src/pipeline/**
+      configuration:
+        # Toda clave que use un .sql de src/pipeline/ tiene que estar acá.
+        # silver_schema lo usan las vistas para calificar la función txt().
+        catalog: ${var.catalog}
+        bronze_schema: ${var.bronze_schema}
+        silver_schema: ${var.silver_schema}
+        demo_currency: ${var.demo_currency}

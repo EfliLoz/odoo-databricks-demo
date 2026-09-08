@@ -1,0 +1,23 @@
+# El dashboard AI/BI, como código.
+#
+# Antes se creaba a mano con `databricks lakeview create`, lo que dejaba el
+# artefacto fuera del repo: no se podía revisar en un pull request ni recrear
+# en otro workspace. Ahora se despliega con el bundle, igual que el pipeline y
+# el agente.
+#
+# El enlace al Genie Agent vive dentro del .lvdash.json
+# (uiSettings.genieSpace) y referencia el recurso del bundle, así que el botón
+# "Ask Genie" del dashboard apunta al agente del MISMO target: el dashboard de
+# dev abre el agente de dev.
+
+resources:
+  dashboards:
+    ventas_dashboard:
+      display_name: Ventas Honduras — Odoo
+      warehouse_id: ${var.warehouse_id}
+      parent_path: /Workspace/Users/efli95.ealc@gmail.com/dashboards
+      file_path: ../src/dashboards/ventas.lvdash.json
+      # Las consultas del dashboard usan nombres de tabla pelados; el catálogo
+      # y el esquema se resuelven acá.
+      dataset_catalog: ${var.catalog}
+      dataset_schema: ${var.gold_schema}

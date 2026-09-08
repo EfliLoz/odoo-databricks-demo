@@ -13,8 +13,8 @@ del repo:
 
 que equivale a:
 
-    docker compose -f infra/docker-compose.yml run --rm -T odoo \
-      odoo shell -d demo --no-http < odoo/seed_ventas.py
+    docker compose -f odoo/docker-compose.yml run --rm -T odoo \
+      odoo shell -d demo --no-http < odoo/scripts/seed_sales.py
 
 El -T es obligatorio: sin él, compose no conecta el stdin y el script no entra.
 
@@ -67,10 +67,34 @@ VENDEDORES = {
 # Estacionalidad: multiplicador de volumen por mes (dic y jun altos).
 ESTACIONALIDAD = [0.8, 0.7, 0.9, 0.9, 1.0, 1.3, 1.0, 0.9, 0.9, 1.0, 1.2, 1.6]
 
-company = env.company
+# Con demo data, Odoo 19 crea varias compañías (San Francisco, Chicago, y una
+# por localización instalada). `env.company` es la primera, que puede no ser la
+# del país de la demo. Se elige por MONEDA: si hay una compañía en DEMO_CURRENCY
+# con almacén, se usa esa; si no, se cae en env.company y se avisa.
+DEMO_CURRENCY = "HNL"
+
+def pick_company():
+    candidates = env["res.company"].search([("currency_id.name", "=", DEMO_CURRENCY)])
+    with_wh = candidates.filtered(
+        lambda c: env["stock.warehouse"].search_count([("company_id", "=", c.id)])
+    )
+    if env.company in with_wh:
+        return env.company
+    if with_wh:
+        return with_wh[0]
+    if env.company.currency_id.name == DEMO_CURRENCY:
+        return env.company
+    print(f"AVISO: ninguna compañía en {DEMO_CURRENCY} con almacén. "
+          f"Se usa {env.company.name} en {env.company.currency_id.name}. "
+          f"El dashboard va a mostrar la moneda equivocada: revisá `make currency`.")
+    return env.company
+
+company = pick_company()
+env = env(context=dict(env.context, allowed_company_ids=[company.id]))
 hn = env.ref("base.hn")
-print(f"Compañía: {company.name} | país {company.country_id.name or '(sin país)'} "
-      f"| moneda {company.currency_id.name}")
+print(f"Compañía: {company.name} | moneda {company.currency_id.name}")
+if company.currency_id.name != DEMO_CURRENCY:
+    print(f"  OJO: se esperaba {DEMO_CURRENCY}. Corré `make currency` antes de dar la demo.")
 
 # --- 1. Departamentos -------------------------------------------------------
 estados = {}
@@ -80,24 +104,34 @@ for nombre, codigo in DEPARTAMENTOS:
     )
     if not est:
         est = env["res.country.state"].create(
-            {"name": nombre, "code": codigo, "country_id": hn.id}
+            {"name": name, "code": codigo, "country_id": hn.id}
         )
     estados[nombre] = est
 print(f"Departamentos listos: {len(estados)}")
 
 # --- 2. Usuarios: gerentes y vendedores -------------------------------------
-def usuario(nombre):
-    login = nombre.lower().replace(" ", ".").replace("ó", "o").replace("é", "e") \
+def get_user(name):
+    login = name.lower().replace(" ", ".").replace("ó", "o").replace("é", "e") \
                           .replace("í", "i").replace("á", "a").replace("ú", "u") + "@demo.hn"
-    u = env["res.users"].search([("login", "=", login)], limit=1)
-    if not u:
+    u = env["res.users"].with_context(active_test=False).search(
+        [("login", "=", login)], limit=1)
+    if u:
+        # Puede venir de una siembra anterior sobre OTRA compañía. Odoo prohíbe
+        # el cruce, así que hay que darle acceso a esta y ponerla por defecto.
+        if company not in u.company_ids:
+            u.company_ids = [(4, company.id)]
+        u.company_id = company
+    else:
         u = env["res.users"].create({
-            "name": nombre, "login": login, "password": "demo1234",
+            "name": name, "login": login, "password": "demo1234",
             "company_id": company.id, "company_ids": [(4, company.id)],
         })
-        grupo = env.ref("sales_team.group_sale_salesman", raise_if_not_found=False)
-        if grupo:
-            u.groups_id = [(4, grupo.id)]
+        group = env.ref("sales_team.group_sale_salesman", raise_if_not_found=False)
+        if group:
+            # Odoo 19 renombró res.users.groups_id -> group_ids. Se resuelve
+            # por introspección del ORM en vez de fijar una versión.
+            campo = "group_ids" if "group_ids" in u._fields else "groups_id"
+            u.write({campo: [(4, group.id)]})
     return u
 
 # --- 3. Equipos de venta (zonas) --------------------------------------------
@@ -106,16 +140,21 @@ def usuario(nombre):
 # y no vale la pena acoplarse.
 equipos, plantilla = {}, {}
 for zona, deptos in ZONAS.items():
-    gerente = usuario(GERENTES[zona])
-    eq = env["crm.team"].search([("name", "=", zona)], limit=1)
+    gerente = get_user(GERENTES[zona])
+    # Acotado por compañía: un equipo con el mismo nombre en otra compañía no
+    # sirve, y usarlo dispara el error de cruce de compañías de Odoo.
+    eq = env["crm.team"].search(
+        [("name", "=", zona), ("company_id", "in", [company.id, False])], limit=1)
     if not eq:
         eq = env["crm.team"].create({
             "name": zona, "user_id": gerente.id, "company_id": company.id,
         })
+    elif not eq.company_id:
+        eq.company_id = company
     else:
         eq.user_id = gerente
     equipos[zona] = eq
-    plantilla[zona] = [usuario(v) for v in VENDEDORES[zona]]
+    plantilla[zona] = [get_user(v) for v in VENDEDORES[zona]]
 print(f"Zonas listas: {', '.join(equipos)}")
 
 depto_a_zona = {d: z for z, ds in ZONAS.items() for d in ds}
@@ -123,6 +162,7 @@ depto_a_zona = {d: z for z, ds in ZONAS.items() for d in ds}
 # --- 4. Clientes repartidos por departamento --------------------------------
 clientes = env["res.partner"].search([
     ("is_company", "=", True), ("customer_rank", ">", 0),
+    ("company_id", "in", [company.id, False]),
 ], limit=120)
 if len(clientes) < 20:   # la demo trae pocos: se completan
     faltan = 40 - len(clientes)
@@ -143,11 +183,28 @@ for c in clientes:
 print(f"Clientes con departamento asignado: {len(clientes)}")
 
 # --- 5. Productos -----------------------------------------------------------
-productos = env["product.product"].search([("sale_ok", "=", True)], limit=60)
+# company_id False = producto compartido entre compañías, que es lo normal en
+# la demo data. Filtrar acá evita el cruce de compañías al crear las líneas.
+productos = env["product.product"].search([
+    ("sale_ok", "=", True),
+    ("company_id", "in", [company.id, False]),
+], limit=60)
 if not productos:
-    raise SystemExit("No hay productos vendibles. ¿Cargaste la demo data?")
+    raise SystemExit(
+        f"No hay productos vendibles para {company.name}. "
+        f"¿Cargaste la demo data con --with-demo?")
 
 # --- 6. Pedidos -------------------------------------------------------------
+# Se borra la tanda anterior (todas llevan client_order_ref = SEED-*) para que
+# volver a sembrar dé el mismo resultado en vez de apilar otra tanda encima.
+previos = env["sale.order"].search([("client_order_ref", "like", "SEED-%")])
+if previos:
+    print(f"Borrando {len(previos)} pedidos de una siembra anterior...")
+    previos.filtered(lambda o: o.state == "sale")._action_cancel()
+    previos.write({"state": "draft"})
+    previos.unlink()
+    env.cr.commit()
+
 hoy = datetime.now()
 inicio = hoy - timedelta(days=30 * MESES_HISTORIA)
 creados, confirmados = 0, 0
@@ -172,6 +229,7 @@ for i in range(N_PEDIDOS):
         }))
 
     pedido = env["sale.order"].create({
+        "company_id": company.id,
         "partner_id": cliente.id,
         "user_id": vendedor.id,
         "team_id": equipos[zona].id,
@@ -204,3 +262,72 @@ print(f"Rango: {inicio.date()} a {hoy.date()}")
 for zona, eq in equipos.items():
     n = env["sale.order"].search_count([("team_id", "=", eq.id)])
     print(f"  {zona:<16} {n:>4} pedidos   gerente: {eq.user_id.name}")
+
+
+# --- 7. Inventario ----------------------------------------------------------
+# Va DESPUÉS de los pedidos a propósito. Los pedidos confirmados reservan
+# stock, así que sembrar antes hacía que las reservas se comieran casi todo y
+# el inventario quedara binario: o agotado o sobrado, sin nada en medio. Un
+# semáforo sin gradiente no cuenta nada en una demo.
+#
+# Sembrando después se puede calcular la cantidad desde lo YA reservado por
+# cada producto, y así fijar el disponible final que se quiere mostrar.
+#
+# La demo data de Odoo además deja las existencias en OTRA compañía, así que la
+# de la demo nace con el almacén vacío.
+almacen = env["stock.warehouse"].search([("company_id", "=", company.id)], limit=1)
+if not almacen:
+    raise SystemExit(
+        f"{company.name} no tiene almacén. Corré `make company` antes del seed.")
+
+ubicacion = almacen.lot_stock_id
+
+# Solo productos ALMACENABLES: Odoo rechaza quants para consumibles y
+# servicios. Odoo 18 reemplazó type = 'product' por is_storable, así que se
+# resuelve por introspección en vez de fijar una versión.
+Producto = env["product.product"]
+if "is_storable" in Producto._fields:
+    almacenables = productos.filtered(lambda p: p.is_storable)
+else:
+    almacenables = productos.filtered(lambda p: p.type == "product")
+
+Quant = env["stock.quant"]
+
+# LA DEMANDA PENDIENTE MANDA. Cada pedido confirmado reserva stock, así que
+# agregar existencias sin más es un bucle que no se gana: lo que se siembra se
+# reserva enseguida para los pedidos que estaban esperando. Hay que sembrar por
+# ENCIMA de la demanda pendiente, no por encima de lo ya reservado.
+lineas = env["sale.order.line"].search([
+    ("order_id.state", "=", "sale"),
+    ("order_id.company_id", "=", company.id),
+    ("product_id", "in", almacenables.ids),
+])
+demanda = {}
+for l in lineas:
+    pendiente = max(l.product_uom_qty - l.qty_delivered, 0)
+    demanda[l.product_id.id] = demanda.get(l.product_id.id, 0) + pendiente
+
+# Disponible que queremos DESPUÉS de que se reserve todo lo pendiente. Un
+# producto de cada cinco queda en riesgo real, otro corto, el resto holgado.
+sembrados = 0
+for i, prod in enumerate(almacenables):
+    if i % 5 == 0:
+        objetivo = random.randint(1, 6)      # riesgo de quiebre
+    elif i % 5 == 1:
+        objetivo = random.randint(12, 30)    # cobertura corta
+    else:
+        objetivo = random.randint(80, 400)   # holgado
+
+    quant = Quant.with_context(inventory_mode=True).create({
+        "product_id": prod.id,
+        "location_id": ubicacion.id,
+        "inventory_quantity": demanda.get(prod.id, 0) + objetivo,
+    })
+    if hasattr(quant, "action_apply_inventory"):
+        quant.action_apply_inventory()
+    sembrados += 1
+
+env.cr.commit()
+print(f"  demanda pendiente cubierta: {int(sum(demanda.values()))} unidades")
+print(f"Inventario sembrado en {almacen.name}: {sembrados} de "
+      f"{len(productos)} productos (solo los almacenables)")

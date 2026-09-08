@@ -1,0 +1,64 @@
+# Bundle de la demo Odoo -> Databricks.
+#
+# Reemplaza el "correr tres .sql a mano en un notebook": el catálogo y los
+# esquemas son variables, el orden de ejecución es una dependencia declarada, y
+# dev/prod son targets en vez de dos copias del SQL.
+#
+# El bundle root es este directorio, no la raíz del repo: el CLI busca
+# databricks.yml hacia arriba desde el cwd y no acepta una ruta al archivo.
+# Los targets `make bundle-*` entran acá por vos.
+#
+#   make bundle-validate / bundle-deploy / bundle-run
+
+bundle:
+  name: odoo-databricks-demo
+
+# Sin esto el bundle queda VACÍO: el CLI no carga resources/ por convención,
+# hay que declararlo. Un bundle sin include valida OK y no despliega nada.
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Catálogo de Unity Catalog donde vive todo el medallón.
+    default: workspace
+  bronze_schema:
+    description: Destino de la ingesta. Lo llena el carril batch o el CDC.
+    default: bronze_pg
+  silver_schema:
+    description: Esquema de las materialized views de Silver.
+    default: silver
+  gold_schema:
+    description: Esquema del modelo estrella que consumen el dashboard y Genie.
+    default: gold
+  demo_currency:
+    description: >-
+      Moneda de la compañía sobre la que corre la demo. Silver filtra los
+      pedidos a esa compañía: con demo data Odoo crea varias y las otras traen
+      pedidos en otra moneda que ensucian las sumas.
+    default: HNL
+  warehouse_id:
+    description: >-
+      SQL warehouse para las tareas de Gold y Genie. Gold no puede ir en el
+      pipeline declarativo porque necesita constraints PK/FK, que las
+      materialized views no admiten. En otro workspace se cambia acá o se pasa
+      con --var warehouse_id=...
+    default: "7725495009f0b0d6"
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://dbc-63e94b04-1837.cloud.databricks.com
+    variables:
+      silver_schema: silver_dev
+      gold_schema: gold_dev
+
+  prod:
+    mode: production
+    workspace:
+      host: https://dbc-63e94b04-1837.cloud.databricks.com
+    permissions:
+      - level: CAN_MANAGE
+        user_name: efli95.ealc@gmail.com

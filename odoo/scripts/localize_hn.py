@@ -3,7 +3,8 @@ Fija país (Honduras) y moneda (HNL) en la compañía.
 
 Se corre DESPUÉS de crear la base y ANTES de instalar `account`:
 
-    docker compose run --rm -T odoo odoo shell -d demo --no-http < localize_hn.py
+    docker compose -f odoo/docker-compose.yml run --rm -T odoo \
+      odoo shell -d demo --no-http < odoo/scripts/localize_hn.py
 
 o, desde la raíz del repo:
 

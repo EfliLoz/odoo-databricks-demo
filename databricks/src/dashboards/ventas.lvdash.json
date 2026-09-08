@@ -1,0 +1,1208 @@
+{
+  "datasets": [
+    {
+      "name": "ds_ventas",
+      "displayName": "Ventas",
+      "asset_name": "ventas"
+    },
+    {
+      "name": "ds_inventario",
+      "displayName": "Inventario y cobertura",
+      "queryLines": [
+        "SELECT p.product AS producto, p.category AS categoria, i.warehouse AS almacen,\n",
+        "       i.available AS disponible, i.on_hand AS existencia,\n",
+        "       COALESCE(v.unidades, 0) AS vendido_90d,\n",
+        "       CASE WHEN COALESCE(v.unidades,0) > 0\n",
+        "            THEN ROUND(i.available / (v.unidades/90.0), 1) END AS dias_cobertura\n",
+        "FROM fact_inventory i\n",
+        "JOIN dim_product p ON p.product_id = i.product_id\n",
+        "LEFT JOIN (SELECT product_id, SUM(quantity) AS unidades FROM fact_sales\n",
+        "           WHERE order_status = 'sale' AND sale_date >= date_sub(current_date(), 90)\n",
+        "           GROUP BY product_id) v ON v.product_id = i.product_id\n",
+        "ORDER BY dias_cobertura ASC NULLS LAST"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "filtros",
+      "displayName": "Filtros",
+      "pageType": "PAGE_TYPE_GLOBAL_FILTERS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "f-fecha",
+            "queries": [
+              {
+                "name": "dashboards/filter/Fecha",
+                "query": {
+                  "datasetName": "ds_ventas",
+                  "fields": [
+                    {
+                      "name": "Fecha",
+                      "expression": "`Fecha`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "Fecha",
+                    "displayName": "Período",
+                    "queryName": "dashboards/filter/Fecha"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Período"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 4,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "f-zona",
+            "queries": [
+              {
+                "name": "dashboards/filter/Zona",
+                "query": {
+                  "datasetName": "ds_ventas",
+                  "fields": [
+                    {
+                      "name": "Zona",
+                      "expression": "`Zona`"
+                    },
+                    {
+                      "name": "Zona_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "Zona",
+                    "displayName": "Zona",
+                    "queryName": "dashboards/filter/Zona"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Zona"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 0,
+            "width": 4,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "f-vendedor",
+            "queries": [
+              {
+                "name": "dashboards/filter/Vendedor",
+                "query": {
+                  "datasetName": "ds_ventas",
+                  "fields": [
+                    {
+                      "name": "Vendedor",
+                      "expression": "`Vendedor`"
+                    },
+                    {
+                      "name": "Vendedor_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "Vendedor",
+                    "displayName": "Vendedor",
+                    "queryName": "dashboards/filter/Vendedor"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Vendedor"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 0,
+            "width": 4,
+            "height": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "resumen",
+      "displayName": "Resumen",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "t-resumen",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# Ventas Honduras\n",
+                "\n",
+                "Pedidos confirmados del ERP, en lempiras. Las cotizaciones y los cancelados no cuentan. Usá la pestaña **Filtros** para acotar por período, zona o vendedor."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-venta",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ventas",
+                  "fields": [
+                    {
+                      "name": "measure(Venta)",
+                      "expression": "MEASURE(`Venta`)"
+                    },
+                    {
+                      "name": "monthly(Fecha)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `Fecha`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(Venta)",
+                  "displayName": "Venta",
+                  "format": {
+                    "type": "number-currency",
+                    "currencyCode": "HNL",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  }
+                },
+                "period": {
+                  "fieldName": "monthly(Fecha)",
+                  "displayName": "Mes"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Venta total"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-pedidos",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ventas",
+                  "fields": [
+                    {
+                      "name": "measure(Pedidos)",
+                      "expression": "MEASURE(`Pedidos`)"
+                    },
+                    {
+                      "name": "monthly(Fecha)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `Fecha`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(Pedidos)",
+                  "displayName": "Pedidos"
+                },
+                "period": {
+                  "fieldName": "monthly(Fecha)",
+                  "displayName": "Mes"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Pedidos confirmados"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-ticket",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ventas",
+                  "fields": [
+                    {
+                      "name": "measure(Ticket promedio)",
+                      "expression": "MEASURE(`Ticket promedio`)"
+                    },
+                    {
+                      "name": "monthly(Fecha)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `Fecha`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(Ticket promedio)",
+                  "displayName": "Ticket promedio",
+                  "format": {
+                    "type": "number-currency",
+                    "currencyCode": "HNL",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  }
+                },
+                "period": {
+                  "fieldName": "monthly(Fecha)",
+                  "displayName": "Mes"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Ticket promedio"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 3,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-clientes",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ventas",
+                  "fields": [
+                    {
+                      "name": "measure(Clientes)",
+                      "expression": "MEASURE(`Clientes`)"
+                    },
+                    {
+                      "name": "monthly(Fecha)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `Fecha`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(Clientes)",
+                  "displayName": "Clientes"
+                },
+                "period": {
+                  "fieldName": "monthly(Fecha)",
+                  "displayName": "Mes"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Clientes que compraron"
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "tendencia",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ventas",
+                  "fields": [
+                    {
+                      "name": "monthly(Fecha)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `Fecha`)"
+                    },
+                    {
+                      "name": "measure(Venta)",
+                      "expression": "MEASURE(`Venta`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "monthly(Fecha)",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "displayName": "Mes"
+                },
+                "y": {
+                  "fieldName": "measure(Venta)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Venta"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Venta mensual"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 7,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "por-zona",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ventas",
+                  "fields": [
+                    {
+                      "name": "Zona",
+                      "expression": "`Zona`"
+                    },
+                    {
+                      "name": "measure(Venta)",
+                      "expression": "MEASURE(`Venta`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "measure(Venta)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Venta"
+                },
+                "y": {
+                  "fieldName": "Zona",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "value",
+                      "reverse": true
+                    }
+                  },
+                  "displayName": "Zona"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Venta por zona"
+              }
+            }
+          },
+          "position": {
+            "x": 7,
+            "y": 6,
+            "width": 5,
+            "height": 6
+          }
+        }
+      ]
+    },
+    {
+      "name": "vendedores",
+      "displayName": "Vendedores",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "t-vend",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Desempeño del equipo comercial\n",
+                "\n",
+                "Ranking por monto vendido, con el ticket promedio de cada uno."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "ranking-vend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ventas",
+                  "fields": [
+                    {
+                      "name": "Vendedor",
+                      "expression": "`Vendedor`"
+                    },
+                    {
+                      "name": "measure(Venta)",
+                      "expression": "MEASURE(`Venta`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "measure(Venta)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Venta"
+                },
+                "y": {
+                  "fieldName": "Vendedor",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "value",
+                      "reverse": true
+                    }
+                  },
+                  "displayName": "Vendedor"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Venta por vendedor"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 7,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "zona-gerente",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ventas",
+                  "fields": [
+                    {
+                      "name": "Gerente",
+                      "expression": "`Gerente`"
+                    },
+                    {
+                      "name": "measure(Venta)",
+                      "expression": "MEASURE(`Venta`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "measure(Venta)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Venta"
+                },
+                "color": {
+                  "fieldName": "Gerente",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Gerente"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Participación por gerente"
+              }
+            }
+          },
+          "position": {
+            "x": 7,
+            "y": 2,
+            "width": 5,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "tabla-vend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ventas",
+                  "fields": [
+                    {
+                      "name": "Vendedor",
+                      "expression": "`Vendedor`"
+                    },
+                    {
+                      "name": "Zona",
+                      "expression": "`Zona`"
+                    },
+                    {
+                      "name": "measure(Pedidos)",
+                      "expression": "MEASURE(`Pedidos`)"
+                    },
+                    {
+                      "name": "measure(Venta)",
+                      "expression": "MEASURE(`Venta`)"
+                    },
+                    {
+                      "name": "measure(Ticket promedio)",
+                      "expression": "MEASURE(`Ticket promedio`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "Vendedor",
+                    "displayName": "Vendedor"
+                  },
+                  {
+                    "fieldName": "Zona",
+                    "displayName": "Zona"
+                  },
+                  {
+                    "fieldName": "measure(Pedidos)",
+                    "displayName": "Pedidos"
+                  },
+                  {
+                    "fieldName": "measure(Venta)",
+                    "displayName": "Venta",
+                    "format": {
+                      "type": "number-currency",
+                      "currencyCode": "HNL",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 2
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "measure(Ticket promedio)",
+                    "displayName": "Ticket promedio",
+                    "format": {
+                      "type": "number-currency",
+                      "currencyCode": "HNL",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Detalle por vendedor"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 9,
+            "width": 12,
+            "height": 7
+          }
+        }
+      ]
+    },
+    {
+      "name": "productos",
+      "displayName": "Productos e inventario",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "t-prod",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Productos e inventario\n",
+                "\n",
+                "Qué se vende y qué se está por acabar. **Días de cobertura** = disponible dividido por la venta diaria de los últimos 90 días."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "top-prod",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ventas",
+                  "fields": [
+                    {
+                      "name": "Producto",
+                      "expression": "`Producto`"
+                    },
+                    {
+                      "name": "measure(Venta)",
+                      "expression": "MEASURE(`Venta`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "measure(Venta)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Venta"
+                },
+                "y": {
+                  "fieldName": "Producto",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "value",
+                      "reverse": true
+                    }
+                  },
+                  "displayName": "Producto"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Productos más vendidos"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 7,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "categorias",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ventas",
+                  "fields": [
+                    {
+                      "name": "Categoria",
+                      "expression": "`Categoria`"
+                    },
+                    {
+                      "name": "measure(Venta)",
+                      "expression": "MEASURE(`Venta`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "measure(Venta)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Venta"
+                },
+                "color": {
+                  "fieldName": "Categoria",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Categoría"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Venta por categoría"
+              }
+            }
+          },
+          "position": {
+            "x": 7,
+            "y": 2,
+            "width": 5,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "quiebre",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_inventario",
+                  "fields": [
+                    {
+                      "name": "producto",
+                      "expression": "`producto`"
+                    },
+                    {
+                      "name": "almacen",
+                      "expression": "`almacen`"
+                    },
+                    {
+                      "name": "disponible",
+                      "expression": "`disponible`"
+                    },
+                    {
+                      "name": "vendido_90d",
+                      "expression": "`vendido_90d`"
+                    },
+                    {
+                      "name": "dias_cobertura",
+                      "expression": "`dias_cobertura`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "producto",
+                    "displayName": "Producto"
+                  },
+                  {
+                    "fieldName": "almacen",
+                    "displayName": "Almacén"
+                  },
+                  {
+                    "fieldName": "disponible",
+                    "displayName": "Disponible",
+                    "format": {
+                      "type": "number",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 0
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "vendido_90d",
+                    "displayName": "Vendido 90d",
+                    "format": {
+                      "type": "number",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 0
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "dias_cobertura",
+                    "displayName": "Días de cobertura",
+                    "format": {
+                      "type": "number",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 1
+                      }
+                    },
+                    "style": {
+                      "type": "basic",
+                      "rules": [
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "15"
+                            },
+                            "operator": "<"
+                          },
+                          "backgroundColor": "#FF7E5C"
+                        },
+                        {
+                          "condition": {
+                            "operand": {
+                              "type": "data-value",
+                              "value": "45"
+                            },
+                            "operator": "<"
+                          },
+                          "backgroundColor": "#FFDD4A"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Riesgo de quiebre — menor cobertura primero"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 9,
+            "width": 12,
+            "height": 7
+          }
+        }
+      ]
+    },
+    {
+      "name": "clientes",
+      "displayName": "Clientes",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "t-cli",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Clientes y cobertura geográfica\n",
+                "\n",
+                "Dónde estamos vendiendo. **Departamento** es la división geográfica de Honduras del cliente."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "por-depto",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ventas",
+                  "fields": [
+                    {
+                      "name": "Departamento",
+                      "expression": "`Departamento`"
+                    },
+                    {
+                      "name": "measure(Venta)",
+                      "expression": "MEASURE(`Venta`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "measure(Venta)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Venta"
+                },
+                "y": {
+                  "fieldName": "Departamento",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "value",
+                      "reverse": true
+                    }
+                  },
+                  "displayName": "Departamento"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Venta por departamento"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 12,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "tabla-cli",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ventas",
+                  "fields": [
+                    {
+                      "name": "Cliente",
+                      "expression": "`Cliente`"
+                    },
+                    {
+                      "name": "Departamento",
+                      "expression": "`Departamento`"
+                    },
+                    {
+                      "name": "Zona",
+                      "expression": "`Zona`"
+                    },
+                    {
+                      "name": "measure(Pedidos)",
+                      "expression": "MEASURE(`Pedidos`)"
+                    },
+                    {
+                      "name": "measure(Venta)",
+                      "expression": "MEASURE(`Venta`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "Cliente",
+                    "displayName": "Cliente"
+                  },
+                  {
+                    "fieldName": "Departamento",
+                    "displayName": "Departamento"
+                  },
+                  {
+                    "fieldName": "Zona",
+                    "displayName": "Zona"
+                  },
+                  {
+                    "fieldName": "measure(Pedidos)",
+                    "displayName": "Pedidos"
+                  },
+                  {
+                    "fieldName": "measure(Venta)",
+                    "displayName": "Venta",
+                    "format": {
+                      "type": "number-currency",
+                      "currencyCode": "HNL",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Detalle por cliente"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 9,
+            "width": 12,
+            "height": 8
+          }
+        }
+      ]
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "canvasBackgroundColor": {
+        "light": "#FCFCFC",
+        "dark": "#1F272D"
+      },
+      "widgetBackgroundColor": {
+        "light": "#FFFFFF",
+        "dark": "#11171C"
+      },
+      "fontColor": {
+        "light": "#11171C",
+        "dark": "#E8ECF0"
+      },
+      "selectionColor": {
+        "light": "#2272B4",
+        "dark": "#8ACAFF"
+      },
+      "visualizationColors": [
+        "#003F5C",
+        "#594E90",
+        "#BC4C96",
+        "#FF5F66",
+        "#FFA600",
+        "#4A8CC7",
+        "#6DD980"
+      ],
+      "widgetHeaderAlignment": "LEFT"
+    },
+    "genieSpace": {
+      "isEnabled": true,
+      "overrideId": "${resources.genie_spaces.ventas.id}",
+      "enablementMode": "ENABLED"
+    }
+  }
+}
