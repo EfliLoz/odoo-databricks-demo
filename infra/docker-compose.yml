@@ -1,0 +1,65 @@
+name: odoo-sandbox
+
+# Sandbox Odoo preparado para replicación lógica hacia Databricks.
+# Pensado para correr en una EC2 en la misma región del workspace:
+# el gateway de Lakeflow Connect tiene que poder abrir el 5432.
+#
+# Las credenciales salen de ../.env (ver ../.env.example). Todas tienen
+# respaldo acá mismo, así que el sandbox levanta aunque no exista .env.
+
+services:
+  db:
+    image: postgres:16
+    command:
+      - postgres
+      - -c
+      - wal_level=logical            # obligatorio para CDC
+      - -c
+      - max_replication_slots=10
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_slot_wal_keep_size=4GB   # tope de WAL retenido por slot abandonado
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-odoo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-odoo_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+    ports:
+      # Restringir por security group al rango de Databricks. Nunca a internet.
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-odoo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  odoo:
+    image: odoo:19
+    # Mac Apple Silicon: descomentar si el pull falla por arquitectura.
+    # platform: linux/amd64
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # El entrypoint de la imagen oficial inyecta db_host/db_port/db_user/
+      # db_password como argumentos SOLO si no están en odoo.conf. Por eso el
+      # config file no lleva credenciales: viven acá y salen de .env.
+      HOST: db
+      PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-odoo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-odoo_dev}
+    ports:
+      # Restringir por security group solo a tu IP.
+      - "${ODOO_PORT:-8069}:8069"
+    volumes:
+      - odoo-data:/var/lib/odoo
+      - ./config/odoo.conf:/etc/odoo/odoo.conf:ro
+      - ./addons:/mnt/extra-addons
+    restart: unless-stopped
+
+volumes:
+  db-data:
+  odoo-data:

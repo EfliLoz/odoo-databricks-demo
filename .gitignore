@@ -1,0 +1,28 @@
+# Secretos: infra/.env lleva las credenciales reales del sandbox.
+# El que se versiona es infra/.env.example, con valores de juguete.
+.env
+infra/.env
+!infra/.env.example
+
+# Addons montados en el contenedor: la carpeta se versiona, su contenido no.
+infra/addons/*
+!infra/addons/.gitkeep
+
+# Volúmenes o dumps que alguien deje caer al lado del compose
+*.dump
+*.sql.gz
+*.tar.gz
+infra/pgdata/
+infra/odoo-data/
+
+# Python (los scripts son stdlib pura, pero odoo shell deja basura)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editores y SO
+.vscode/
+.idea/
+*.swp
+.DS_Store
