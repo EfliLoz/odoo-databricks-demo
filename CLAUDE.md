@@ -129,13 +129,16 @@ Estas no son preferencias, son cosas que rompen el pipeline.
   Por eso existe `make company` (`odoo/scripts/prepare_company.py`): le crea
   el almacén y la deja como compañía por defecto del admin. `seed` depende de
   ese target, así que corre solo.
-- **El inventario se siembra DESPUÉS de los pedidos, y en dos pasadas.** Los
-  pedidos confirmados reservan stock: sembrar antes hacía que las reservas se
-  comieran casi todo y el inventario quedara binario (agotado o sobrado), que
-  no muestra nada. Y una sola pasada tampoco alcanza: cuando se lee la reserva
-  el almacén está vacío, así que da cero, y al aplicar el inventario Odoo
-  reserva de golpe para los pedidos que estaban esperando. La segunda pasada
-  mide el disponible real y lo corrige.
+- **El inventario se siembra DESPUÉS de los pedidos y POR ENCIMA de la demanda
+  pendiente.** Cada pedido confirmado reserva stock, así que agregar
+  existencias sin más es un bucle que no se gana: lo que se siembra se reserva
+  enseguida para los pedidos que esperaban. Lo que manda no es lo ya reservado
+  sino la demanda pendiente
+  (`SUM(product_uom_qty - qty_delivered)` de las líneas confirmadas).
+  Sembrando `demanda + objetivo`, las reservas se llevan la demanda y queda
+  exactamente el objetivo: determinista, en una sola pasada.
+  Sin esto el inventario sale binario —todo agotado o todo sobrado— y la
+  pregunta "¿qué se me va a acabar?" no muestra nada.
 - **El seed elige la compañía por MONEDA, no `env.company`.** Y todos sus
   `search` van acotados por compañía. Odoo prohíbe el cruce de compañías: un
   `crm.team` con el mismo nombre en otra compañía revienta la creación del

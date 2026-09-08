@@ -293,55 +293,41 @@ else:
 
 Quant = env["stock.quant"]
 
-# Disponible que queremos DESPUÉS de las reservas. Un producto de cada cinco
-# queda en riesgo real, otro corto, el resto holgado.
-objetivos = {}
+# LA DEMANDA PENDIENTE MANDA. Cada pedido confirmado reserva stock, así que
+# agregar existencias sin más es un bucle que no se gana: lo que se siembra se
+# reserva enseguida para los pedidos que estaban esperando. Hay que sembrar por
+# ENCIMA de la demanda pendiente, no por encima de lo ya reservado.
+lineas = env["sale.order.line"].search([
+    ("order_id.state", "=", "sale"),
+    ("order_id.company_id", "=", company.id),
+    ("product_id", "in", almacenables.ids),
+])
+demanda = {}
+for l in lineas:
+    pendiente = max(l.product_uom_qty - l.qty_delivered, 0)
+    demanda[l.product_id.id] = demanda.get(l.product_id.id, 0) + pendiente
+
+# Disponible que queremos DESPUÉS de que se reserve todo lo pendiente. Un
+# producto de cada cinco queda en riesgo real, otro corto, el resto holgado.
+sembrados = 0
 for i, prod in enumerate(almacenables):
     if i % 5 == 0:
-        objetivos[prod.id] = random.randint(1, 6)      # riesgo de quiebre
+        objetivo = random.randint(1, 6)      # riesgo de quiebre
     elif i % 5 == 1:
-        objetivos[prod.id] = random.randint(8, 25)     # cobertura corta
+        objetivo = random.randint(12, 30)    # cobertura corta
     else:
-        objetivos[prod.id] = random.randint(60, 400)   # holgado
+        objetivo = random.randint(80, 400)   # holgado
 
-
-def ajustar(prod, cantidad):
-    """Fija la existencia del producto en el almacén de la demo."""
     quant = Quant.with_context(inventory_mode=True).create({
         "product_id": prod.id,
         "location_id": ubicacion.id,
-        "inventory_quantity": cantidad,
+        "inventory_quantity": demanda.get(prod.id, 0) + objetivo,
     })
     if hasattr(quant, "action_apply_inventory"):
         quant.action_apply_inventory()
+    sembrados += 1
 
-
-def disponible(prod):
-    qs = Quant.search([
-        ("product_id", "=", prod.id), ("location_id", "=", ubicacion.id),
-    ])
-    return sum(qs.mapped("quantity")) - sum(qs.mapped("reserved_quantity"))
-
-
-# DOS PASADAS. En la primera el almacén está vacío, así que las reservas leen
-# cero; al aplicar el inventario Odoo reserva para los pedidos confirmados que
-# estaban esperando stock y se come lo sembrado. La segunda pasada mide el
-# disponible REAL y lo corrige, que es la única forma de fijar el gradiente que
-# se quiere mostrar.
-for prod in almacenables:
-    ajustar(prod, objetivos[prod.id])
 env.cr.commit()
-
-sembrados, corregidos = len(almacenables), 0
-for prod in almacenables:
-    falta = objetivos[prod.id] - disponible(prod)
-    if falta > 0:
-        qs = Quant.search([
-            ("product_id", "=", prod.id), ("location_id", "=", ubicacion.id),
-        ])
-        ajustar(prod, sum(qs.mapped("quantity")) + falta)
-        corregidos += 1
-env.cr.commit()
-print(f"  segunda pasada: {corregidos} productos ajustados por reservas")
+print(f"  demanda pendiente cubierta: {int(sum(demanda.values()))} unidades")
 print(f"Inventario sembrado en {almacen.name}: {sembrados} de "
       f"{len(productos)} productos (solo los almacenables)")
