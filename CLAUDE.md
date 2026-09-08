@@ -129,6 +129,13 @@ Estas no son preferencias, son cosas que rompen el pipeline.
   Por eso existe `make company` (`odoo/scripts/prepare_company.py`): le crea
   el almacén y la deja como compañía por defecto del admin. `seed` depende de
   ese target, así que corre solo.
+- **El inventario se siembra DESPUÉS de los pedidos, y en dos pasadas.** Los
+  pedidos confirmados reservan stock: sembrar antes hacía que las reservas se
+  comieran casi todo y el inventario quedara binario (agotado o sobrado), que
+  no muestra nada. Y una sola pasada tampoco alcanza: cuando se lee la reserva
+  el almacén está vacío, así que da cero, y al aplicar el inventario Odoo
+  reserva de golpe para los pedidos que estaban esperando. La segunda pasada
+  mide el disponible real y lo corrige.
 - **El seed elige la compañía por MONEDA, no `env.company`.** Y todos sus
   `search` van acotados por compañía. Odoo prohíbe el cruce de compañías: un
   `crm.team` con el mismo nombre en otra compañía revienta la creación del
@@ -276,6 +283,12 @@ Esta división es deliberada y está fundamentada, no es gusto:
   el agente de ese mismo target.
 - **El `serialized_space` del agente va inline en YAML**, no en un
   `.geniespace.json` aparte, para que las variables del bundle interpolen.
+- **Dentro del `.lvdash.json` interpola `${resources.*}` pero NO `${var.*}`.**
+  Probado: `${var.catalog}` falla con `invalid dependency "${var.catalog}", no
+  such node ""`. Por eso el catálogo y el esquema del dashboard NO van en el
+  JSON: el `asset_name` usa el nombre pelado (`ventas`) y el recurso declara
+  `dataset_catalog`/`dataset_schema` con las variables. El enlace al agente sí
+  usa `${resources.genie_spaces.ventas.id}` y se resuelve bien.
 
 ### Metric View (la capa semántica)
 

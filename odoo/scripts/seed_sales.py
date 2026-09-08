@@ -194,63 +194,6 @@ if not productos:
         f"No hay productos vendibles para {company.name}. "
         f"¿Cargaste la demo data con --with-demo?")
 
-# --- 5b. Inventario ---------------------------------------------------------
-# La demo data de Odoo deja las existencias en OTRA compañía, así que la de la
-# demo nace con el almacén vacío. Sin esto, Silver filtra por compañía y el
-# inventario sale en cero: se cae la pregunta "¿qué se me va a acabar?", que es
-# de las que mejor funcionan en vivo.
-#
-# Se siembran cantidades deliberadamente desparejas para que haya productos en
-# riesgo real de quiebre y otros sobrados. Un inventario plano no cuenta nada.
-almacen = env["stock.warehouse"].search([("company_id", "=", company.id)], limit=1)
-if not almacen:
-    raise SystemExit(
-        f"{company.name} no tiene almacén. Corré `make company` antes del seed.")
-
-ubicacion = almacen.lot_stock_id
-existentes = env["stock.quant"].search_count([
-    ("company_id", "=", company.id), ("location_id", "=", ubicacion.id),
-])
-if existentes:
-    print(f"Inventario ya sembrado en {almacen.name}: {existentes} quants")
-else:
-    # Solo productos ALMACENABLES: Odoo rechaza quants para consumibles y
-    # servicios ("Quants cannot be created for consumables or services").
-    # Odoo 18 reemplazó type = 'product' por is_storable, así que se resuelve
-    # por introspección en vez de fijar una versión.
-    Producto = env["product.product"]
-    if "is_storable" in Producto._fields:
-        almacenables = productos.filtered(lambda p: p.is_storable)
-    else:
-        almacenables = productos.filtered(lambda p: p.type == "product")
-    if not almacenables:
-        print("  ningún producto almacenable: se omite la siembra de inventario")
-
-    Quant = env["stock.quant"].with_context(inventory_mode=True)
-    sembrados = 0
-    for i, prod in enumerate(almacenables):
-        # Perfil de existencias: ~1 de cada 6 productos queda escaso a
-        # propósito, el resto en rangos normales.
-        if i % 6 == 0:
-            cantidad = random.randint(0, 8)        # riesgo de quiebre
-        elif i % 6 == 1:
-            cantidad = random.randint(9, 30)       # cobertura corta
-        else:
-            cantidad = random.randint(40, 400)     # sobrado
-        quant = Quant.create({
-            "product_id": prod.id,
-            "location_id": ubicacion.id,
-            "inventory_quantity": cantidad,
-        })
-        # En Odoo 17+ el ajuste se aplica con action_apply_inventory. Se
-        # resuelve por introspección: el nombre cambió entre versiones.
-        if hasattr(quant, "action_apply_inventory"):
-            quant.action_apply_inventory()
-        sembrados += 1
-    env.cr.commit()
-    print(f"Inventario sembrado en {almacen.name}: {sembrados} de "
-          f"{len(productos)} productos (solo los almacenables)")
-
 # --- 6. Pedidos -------------------------------------------------------------
 # Se borra la tanda anterior (todas llevan client_order_ref = SEED-*) para que
 # volver a sembrar dé el mismo resultado en vez de apilar otra tanda encima.
@@ -319,3 +262,86 @@ print(f"Rango: {inicio.date()} a {hoy.date()}")
 for zona, eq in equipos.items():
     n = env["sale.order"].search_count([("team_id", "=", eq.id)])
     print(f"  {zona:<16} {n:>4} pedidos   gerente: {eq.user_id.name}")
+
+
+# --- 7. Inventario ----------------------------------------------------------
+# Va DESPUÉS de los pedidos a propósito. Los pedidos confirmados reservan
+# stock, así que sembrar antes hacía que las reservas se comieran casi todo y
+# el inventario quedara binario: o agotado o sobrado, sin nada en medio. Un
+# semáforo sin gradiente no cuenta nada en una demo.
+#
+# Sembrando después se puede calcular la cantidad desde lo YA reservado por
+# cada producto, y así fijar el disponible final que se quiere mostrar.
+#
+# La demo data de Odoo además deja las existencias en OTRA compañía, así que la
+# de la demo nace con el almacén vacío.
+almacen = env["stock.warehouse"].search([("company_id", "=", company.id)], limit=1)
+if not almacen:
+    raise SystemExit(
+        f"{company.name} no tiene almacén. Corré `make company` antes del seed.")
+
+ubicacion = almacen.lot_stock_id
+
+# Solo productos ALMACENABLES: Odoo rechaza quants para consumibles y
+# servicios. Odoo 18 reemplazó type = 'product' por is_storable, así que se
+# resuelve por introspección en vez de fijar una versión.
+Producto = env["product.product"]
+if "is_storable" in Producto._fields:
+    almacenables = productos.filtered(lambda p: p.is_storable)
+else:
+    almacenables = productos.filtered(lambda p: p.type == "product")
+
+Quant = env["stock.quant"]
+
+# Disponible que queremos DESPUÉS de las reservas. Un producto de cada cinco
+# queda en riesgo real, otro corto, el resto holgado.
+objetivos = {}
+for i, prod in enumerate(almacenables):
+    if i % 5 == 0:
+        objetivos[prod.id] = random.randint(1, 6)      # riesgo de quiebre
+    elif i % 5 == 1:
+        objetivos[prod.id] = random.randint(8, 25)     # cobertura corta
+    else:
+        objetivos[prod.id] = random.randint(60, 400)   # holgado
+
+
+def ajustar(prod, cantidad):
+    """Fija la existencia del producto en el almacén de la demo."""
+    quant = Quant.with_context(inventory_mode=True).create({
+        "product_id": prod.id,
+        "location_id": ubicacion.id,
+        "inventory_quantity": cantidad,
+    })
+    if hasattr(quant, "action_apply_inventory"):
+        quant.action_apply_inventory()
+
+
+def disponible(prod):
+    qs = Quant.search([
+        ("product_id", "=", prod.id), ("location_id", "=", ubicacion.id),
+    ])
+    return sum(qs.mapped("quantity")) - sum(qs.mapped("reserved_quantity"))
+
+
+# DOS PASADAS. En la primera el almacén está vacío, así que las reservas leen
+# cero; al aplicar el inventario Odoo reserva para los pedidos confirmados que
+# estaban esperando stock y se come lo sembrado. La segunda pasada mide el
+# disponible REAL y lo corrige, que es la única forma de fijar el gradiente que
+# se quiere mostrar.
+for prod in almacenables:
+    ajustar(prod, objetivos[prod.id])
+env.cr.commit()
+
+sembrados, corregidos = len(almacenables), 0
+for prod in almacenables:
+    falta = objetivos[prod.id] - disponible(prod)
+    if falta > 0:
+        qs = Quant.search([
+            ("product_id", "=", prod.id), ("location_id", "=", ubicacion.id),
+        ])
+        ajustar(prod, sum(qs.mapped("quantity")) + falta)
+        corregidos += 1
+env.cr.commit()
+print(f"  segunda pasada: {corregidos} productos ajustados por reservas")
+print(f"Inventario sembrado en {almacen.name}: {sembrados} de "
+      f"{len(productos)} productos (solo los almacenables)")

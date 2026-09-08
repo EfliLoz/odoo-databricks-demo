@@ -3,7 +3,7 @@
     {
       "name": "ds_ventas",
       "displayName": "Ventas",
-      "asset_name": "${var.catalog}.${var.gold_schema}.ventas"
+      "asset_name": "ventas"
     },
     {
       "name": "ds_inventario",
