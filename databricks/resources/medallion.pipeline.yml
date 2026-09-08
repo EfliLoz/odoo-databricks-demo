@@ -24,3 +24,4 @@ resources:
         catalog: ${var.catalog}
         bronze_schema: ${var.bronze_schema}
         silver_schema: ${var.silver_schema}
+        demo_currency: ${var.demo_currency}

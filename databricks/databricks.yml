@@ -31,6 +31,12 @@ variables:
   gold_schema:
     description: Esquema del modelo estrella que consumen el dashboard y Genie.
     default: gold
+  demo_currency:
+    description: >-
+      Moneda de la compañía sobre la que corre la demo. Silver filtra los
+      pedidos a esa compañía: con demo data Odoo crea varias y las otras traen
+      pedidos en otra moneda que ensucian las sumas.
+    default: HNL
   warehouse_id:
     description: >-
       SQL warehouse para las tareas de Gold y Genie. Gold no puede ir en el

@@ -40,14 +40,26 @@ resources:
               silver_schema: ${var.silver_schema}
               gold_schema: ${var.gold_schema}
 
-        # 4. Los trusted assets del agente.
-        - task_key: genie
+        # 4. La capa semántica en español que consumen Genie y el dashboard.
+        - task_key: metrics
           depends_on:
             - task_key: gold
           sql_task:
             warehouse_id: ${var.warehouse_id}
             file:
-              path: ../src/sql/02_genie.sql
+              path: ../src/sql/02_metrics.sql
+            parameters:
+              catalog: ${var.catalog}
+              gold_schema: ${var.gold_schema}
+
+        # 5. Los trusted assets del agente.
+        - task_key: genie
+          depends_on:
+            - task_key: metrics
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../src/sql/03_genie.sql
             parameters:
               catalog: ${var.catalog}
               gold_schema: ${var.gold_schema}

@@ -20,4 +20,12 @@ AS SELECT
   CAST(o.amount_tax     AS DECIMAL(18,2)) AS tax_amount,
   CAST(o.amount_total   AS DECIMAL(18,2)) AS amount_total
 FROM ${catalog}.${bronze_schema}.sale_order o
-LEFT JOIN ${catalog}.${bronze_schema}.res_currency cur ON cur.id = o.currency_id;
+LEFT JOIN ${catalog}.${bronze_schema}.res_currency cur ON cur.id = o.currency_id
+JOIN      ${catalog}.${bronze_schema}.res_company  co  ON co.id  = o.company_id
+JOIN      ${catalog}.${bronze_schema}.res_currency ccur ON ccur.id = co.currency_id
+-- La demo trabaja sobre UNA compañía. Con demo data, Odoo 19 crea varias
+-- (ver `make currency`) y las otras traen sus propios pedidos en USD, que
+-- mezclados con los de la demo dan sumas sin sentido. Se filtra por la moneda
+-- de la COMPAÑÍA, no del pedido: así un cliente con pedidos multi-moneda
+-- dentro de su compañía no pierde filas.
+WHERE ccur.name = '${demo_currency}';

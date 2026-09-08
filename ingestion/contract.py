@@ -66,6 +66,7 @@ TABLES = {
         "amount_untaxed",     # computado ALMACENADO: sí existe en la tabla
         "amount_tax",
         "amount_total",
+        "company_id",        # la demo trabaja sobre UNA compañía: ver silver_orders
     ],
     "sale_order_line": [
         "id",

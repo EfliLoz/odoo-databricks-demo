@@ -314,16 +314,16 @@ Agents**, y **Genie One** es la interfaz donde el usuario de negocio consume
 dashboards, agentes y apps.
 
 ```
-databricks/src/sql/02_genie.sql    → siete trusted assets + el bloque de Instructions
+databricks/src/sql/03_genie.sql    → siete trusted assets + el bloque de Instructions
 ```
 
 Crear el agente sobre `gold.sales_metrics`, `gold.fact_sales`,
 `gold.fact_inventory` y las cuatro dimensiones. Después:
 
-1. **Instrucciones** — copiar el bloque comentado al final de `databricks/src/sql/02_genie.sql`.
+1. **Instrucciones** — copiar el bloque comentado al final de `databricks/src/sql/03_genie.sql`.
    Cortas y específicas. Nunca para tapar metadata faltante: si se resuelve con
    un `COMMENT` en la columna, va en el `COMMENT`.
-2. **Trusted assets** — agregar las siete funciones de `databricks/src/sql/02_genie.sql`.
+2. **Trusted assets** — agregar las siete funciones de `databricks/src/sql/03_genie.sql`.
    Cuando Genie las usa, la respuesta sale con etiqueta **"Trusted"**, que es
    una señal de confianza que el usuario no técnico no puede obtener leyendo
    el SQL generado.
@@ -469,7 +469,7 @@ todavía no.
 | `databricks/src/pipeline/*.sql` | 6 | tarea `silver` del job |
 | `databricks/src/sql/00_setup.sql` | 6 | tarea `setup` |
 | `databricks/src/sql/01_gold.sql` | 6 | tarea `gold` |
-| `databricks/src/sql/02_genie.sql` | 7 | tarea `genie` |
+| `databricks/src/sql/03_genie.sql` | 7 | tarea `genie` |
 
 Los scripts del carril por API (`odoo_probe.py`, `odoo_extract.py`) no están en
 este repo — ver *Fuera del alcance de la demo*.

@@ -1,5 +1,5 @@
 -- ============================================================================
--- 02 — Genie Agent de ventas: trusted assets
+-- 03 — Genie Agent de ventas: trusted assets
 --
 -- Orden:   DESPUÉS de 01_gold.sql. Es la tarea `genie` del job `medallion`.
 -- Corre en: tarea SQL del bundle, sobre un SQL warehouse.

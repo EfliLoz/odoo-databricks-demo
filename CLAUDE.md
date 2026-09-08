@@ -38,7 +38,7 @@ databricks/           EL BUNDLE — nada de Odoo acá dentro
   databricks.yml        variables y targets dev/prod. Es el bundle root.
   resources/            medallion.pipeline.yml, medallion.job.yml
   src/pipeline/         Silver, como materialized views
-  src/sql/              00_setup, 01_gold, 02_genie (tareas SQL del job)
+  src/sql/              00_setup, 01_gold, 02_metrics, 03_genie (tareas del job)
 
 ingestion/              EL PUENTE — lo único que toca los dos lados
   contract.py           QUÉ se extrae de Odoo: fuente única de las 17 tablas
@@ -96,7 +96,7 @@ Del lado de Databricks, todo pasa por el bundle:
 ```bash
 make bundle-validate    # cd databricks && databricks bundle validate --strict
 make bundle-deploy
-make bundle-run         # setup -> silver -> gold -> genie
+make bundle-run         # setup -> silver -> gold -> metrics -> genie
 ```
 
 ## Reglas duras
@@ -134,6 +134,12 @@ Estas no son preferencias, son cosas que rompen el pipeline.
   pedido con "no company crossover is allowed".
 - **Verificar siempre con `make currency` antes de dar la demo por buena.**
   579 pedidos en USD se ven idénticos a 579 en HNL hasta que alguien mira.
+- **Silver filtra a la compañía de la demo.** `silver_orders` se queda solo con
+  los pedidos cuya COMPAÑÍA está en `demo_currency` (variable del bundle, HNL
+  por defecto). Las otras compañías que crea el demo de Odoo traen sus propios
+  pedidos en USD y mezclados dan sumas sin sentido. Se filtra por la moneda de
+  la compañía y no la del pedido, para que un cliente con pedidos multi-moneda
+  dentro de una compañía no pierda filas.
 - **Desde Odoo 19 la demo data NO se instala por defecto.** `--without-demo`
   es el default; hay que pasar `--with-demo` explícitamente al crear la base.
   Sin eso `product_template` queda en 0 y el seed muere sin productos.
@@ -236,12 +242,15 @@ Esta división es deliberada y está fundamentada, no es gusto:
   metadatos en el idioma del usuario, y el usuario final es un gerente
   comercial hondureño. Los `COMMENT` son la señal de entrada principal del
   agente. **Nunca traducirlos al inglés "por consistencia".**
-- **Los sinónimos del Genie Agent NO son opcionales.** Genie usa los nombres de
-  columna, no solo los comentarios, para hacer matching contra la pregunta. Con
-  los identificadores en inglés y el gerente preguntando en español, el puente
-  son los sinónimos por columna. La lista mínima está al final de
-  `databricks/src/sql/02_genie.sql`; sin cargarla, la calidad de las respuestas
-  cae. Es el precio de tener el esquema en inglés, y se paga una sola vez.
+- **El puente al español es la Metric View, no los sinónimos de la UI.**
+  Genie usa los nombres de columna —no solo los comentarios— para hacer
+  matching contra la pregunta, así que con el esquema en inglés y el gerente
+  preguntando en español hacía falta un puente. Ese puente es
+  `databricks/src/sql/02_metrics.sql`: en una metric view el `name` es la
+  etiqueta de negocio (`Zona`, `Gerente`, `Venta`) y el `expr` la columna
+  física en inglés. **Va versionado en el repo**, a diferencia de los sinónimos
+  del Genie Agent, que viven solo en la UI y se pierden si alguien lo recrea.
+  Genie y el dashboard consumen la metric view, no Gold directo.
 - **Bronze es intocable**: son los nombres literales del esquema de Odoo
   (`sale_order`, `res_partner`, `product_template`). Ya están en inglés y
   renombrarlos rompería el contrato con el origen.
@@ -249,10 +258,24 @@ Esta división es deliberada y está fundamentada, no es gusto:
   departamentos hondureños, los nombres de vendedores. Eso es contenido, no
   esquema.
 
+### Metric View (la capa semántica)
+
+- **`synonyms` NO está soportado** en la versión YAML de este workspace: solo
+  `name`, `expr` y `window`. Probado. No hace falta, porque el `name` ya separa
+  la etiqueta de negocio del nombre físico.
+- **Las medidas se leen con `MEASURE()`**, nunca directo, y no pueden ir en
+  `WHERE` ni en `GROUP BY`:
+  `SELECT \`Zona\`, MEASURE(\`Venta\`) FROM ventas GROUP BY \`Zona\``
+- **El filtro `order_status = 'sale'` vive en la metric view**, así que quien la
+  consulta no puede olvidarlo. Las cotizaciones y los cancelados quedan fuera
+  por construcción.
+- **"Ticket promedio" se define una sola vez ahí.** Si cada quien lo calcula a
+  su manera, los números del chat no cuadran con los del dashboard.
+
 ### Gold y Genie
 
 - **`LIMIT` no acepta un parámetro de función en Databricks.** Falla con
-  `INVALID_LIMIT_LIKE_EXPRESSION.IS_UNFOLDABLE`. En `02_genie.sql` el recorte
+  `INVALID_LIMIT_LIKE_EXPRESSION.IS_UNFOLDABLE`. En `03_genie.sql` el recorte
   del top-N se hace con `ROW_NUMBER() OVER (...)` filtrado en un `WHERE`.
 - **Los `COMMENT` son funcionales, no documentación.** Genie los usa como
   contexto principal. Nunca quitarlos ni acortarlos "para limpiar".
@@ -280,7 +303,7 @@ Esta división es deliberada y está fundamentada, no es gusto:
 - Los scripts Python son de stdlib pura, sin dependencias externas. Si algo
   necesita una librería, primero justificarlo.
 - Un cambio en Silver que cambie nombres de columna obliga a revisar Gold y los
-  trusted assets de `databricks/src/sql/02_genie.sql`. No dejarlos desincronizados.
+  trusted assets de `databricks/src/sql/03_genie.sql`. No dejarlos desincronizados.
 
 ## Qué NO hacer
 
