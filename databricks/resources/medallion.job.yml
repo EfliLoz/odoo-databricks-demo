@@ -1,0 +1,53 @@
+# El orden completo, como dependencias declaradas en vez de "correr en orden
+# numérico" escrito en un README.
+
+resources:
+  jobs:
+    medallion:
+      name: odoo_medallion
+      description: Bronze -> Silver -> Gold -> trusted assets de Genie.
+
+      tasks:
+        # 1. Esquemas y la función txt(). Va antes del pipeline porque las
+        #    vistas de Silver la usan y un pipeline no puede crear UDFs.
+        - task_key: setup
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../src/sql/00_setup.sql
+            parameters:
+              catalog: ${var.catalog}
+              silver_schema: ${var.silver_schema}
+              gold_schema: ${var.gold_schema}
+
+        # 2. Silver: las siete vistas, como materialized views.
+        - task_key: silver
+          depends_on:
+            - task_key: setup
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.medallion_silver.id}
+
+        # 3. Gold: tablas con COMMENT y constraints. Genie depende de ambos.
+        - task_key: gold
+          depends_on:
+            - task_key: silver
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../src/sql/01_gold.sql
+            parameters:
+              catalog: ${var.catalog}
+              silver_schema: ${var.silver_schema}
+              gold_schema: ${var.gold_schema}
+
+        # 4. Los trusted assets del agente.
+        - task_key: genie
+          depends_on:
+            - task_key: gold
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../src/sql/02_genie.sql
+            parameters:
+              catalog: ${var.catalog}
+              gold_schema: ${var.gold_schema}

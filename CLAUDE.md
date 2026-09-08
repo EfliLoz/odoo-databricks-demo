@@ -9,24 +9,58 @@ ERP Odoo replicados a un lakehouse, con dashboard AI/BI y un agente Genie que
 responde en español. El público final es un gerente comercial, no un analista.
 
 ```
-Odoo 19 → PostgreSQL → Lakeflow Connect (CDC) → bronze_pg → silver → gold
-                                                                       ↓
-                                                       Dashboard AI/BI + Genie
+Odoo → PostgreSQL ──┬── carril cdc    (Lakeflow Connect) ──┐
+                    └── carril batch  (CSV + COPY INTO)  ──┴→ bronze_pg
+                                                                 ↓
+                                                          silver → gold
+                                                                 ↓
+                                                  Dashboard AI/BI + Genie
 ```
+
+Los dos carriles llenan el mismo contrato (`ingestion/contract.py`) y Silver no
+sabe cuál corrió. Cambiar de carril no toca Silver, Gold, dashboard ni Genie.
 
 ## Estructura
 
+Tres dominios que **no se mezclan**. Cada uno es autocontenido:
+
 ```
 Makefile              todos los comandos de abajo, con `make help`
-infra/                docker-compose.yml, .env.example, config/odoo.conf, addons/
-odoo/                 localize_hn.py, seed_ventas.py  (corren en `odoo shell`)
-postgres/             lakeflow_setup.sql              (corre en `psql`)
-databricks/           01_silver.sql, 02_gold.sql, 03_genie.sql  (notebook SQL)
+
+odoo/                 EL SANDBOX — nada de Databricks acá dentro
+  docker-compose.yml    Odoo 19 + Postgres 16 con replicación lógica
+  .env.example          credenciales y puertos (copiar a odoo/.env)
+  config/odoo.conf
+  addons/
+  scripts/              localize_hn.py, seed_sales.py (corren en `odoo shell`)
+
+databricks/           EL BUNDLE — nada de Odoo acá dentro
+  databricks.yml        variables y targets dev/prod. Es el bundle root.
+  resources/            medallion.pipeline.yml, medallion.job.yml
+  src/pipeline/         Silver, como materialized views
+  src/sql/              00_setup, 01_gold, 02_genie (tareas SQL del job)
+
+ingestion/              EL PUENTE — lo único que toca los dos lados
+  contract.py           QUÉ se extrae de Odoo: fuente única de las 17 tablas
+  cdc/                  lakeflow_setup.sql (Lakeflow Connect, workspace de pago)
+  batch/                load_bronze.py     (JSON Lines + read_files)
 ```
 
-Las credenciales viven en `infra/.env` (no versionado, plantilla en
-`infra/.env.example`). Está junto al compose a propósito: Compose busca el
+La separación es una regla, no una preferencia: si algo de Databricks necesita
+saber de Odoo (o al revés), va en `ingestion/`, que para eso existe.
+
+Ya no se corren `.sql` sueltos en un notebook: el orden es una dependencia
+declarada en `databricks/resources/medallion.job.yml`, y el catálogo y los
+esquemas son variables del bundle en vez de estar quemados.
+
+Las credenciales viven en `odoo/.env` (no versionado, plantilla en
+`odoo/.env.example`). Está junto al compose a propósito: Compose busca el
 `.env` en el directorio del archivo de compose, no en la raíz del repo.
+
+**El bundle root es `databricks/`**, no la raíz. El CLI busca `databricks.yml`
+hacia arriba desde el cwd y no acepta una ruta al archivo, así que los comandos
+de bundle entran a ese directorio. Los targets `bundle-*` del Makefile ya lo
+hacen.
 
 ## Comandos
 
@@ -36,13 +70,16 @@ que se rompen fácil, así que preferilos a escribir los comandos a mano.
 ```bash
 make help          # lista de targets
 
-make env           # crear infra/.env desde el ejemplo
+make env           # crear odoo/.env desde el ejemplo
 make bootstrap     # db-up → db-create → localize → account → up
 make seed          # ~900 pedidos de demo
 make cdc-setup     # usuario de replicación, publicación y slot
 
 make up / down / logs / ps / restart
 make reset         # down -v: borra volúmenes, pide confirmación
+
+make load-bronze  # carril batch: Odoo -> bronze_pg
+make export-bronze  # solo los CSV, sin tocar Databricks
 
 make wal-level     # ¿arrancó Postgres en logical?
 make slots         # VIGILANCIA: slots y WAL retenido
@@ -54,9 +91,13 @@ make odoo-shell    # shell del ORM
 
 Si hace falta el comando crudo, sale de `make -n <target>`.
 
-Los `.sql` de `databricks/` se corren en un notebook, **en orden numérico**.
-`02_gold.sql` depende de las vistas que crea `01_silver.sql`, y `03_genie.sql`
-de las tablas que crea `02_gold.sql`.
+Del lado de Databricks, todo pasa por el bundle:
+
+```bash
+make bundle-validate    # cd databricks && databricks bundle validate --strict
+make bundle-deploy
+make bundle-run         # setup -> silver -> gold -> genie
+```
 
 ## Reglas duras
 
@@ -71,12 +112,63 @@ Estas no son preferencias, son cosas que rompen el pipeline.
 - **La moneda de la compañía no se puede cambiar si existen asientos
   contables.** El país y la moneda se fijan **antes** de instalar `account`.
   Si hay que cambiarlos, se recrea la base.
-- **Una base creada sin demo data no se puede rellenar después.** Se bota y se
-  recrea.
+- **`sale_management` arrastra `account` como dependencia.** Con demo data eso
+  crea asientos contables de una. Por eso `make db-create` instala **solo
+  `base`**, y el resto va en `make modules`, después de `make localize`.
+  Invertirlo rompe la moneda en silencio.
+- **Instalar `account` a secas SOBRESCRIBE la moneda de la compañía.** Aplica
+  `generic_coa` (US) y deja todo en USD aunque `localize` haya fijado HNL. Hay
+  que instalar la localización del país (`l10n_hn`), que trae su propio plan y
+  respeta la moneda. `make modules` ya lo hace.
+- **Con demo data, Odoo 19 crea varias compañías y no se puede evitar.** El
+  demo de `account` renombra la principal, le pone `generic_coa` en USD, y crea
+  una compañía por localización instalada. Instalar `l10n_hn` ANTES que
+  `account` no lo evita: se probó. La compañía con la moneda correcta nace
+  **sin almacén**, y sin almacén no hay `stock_quant` ni inventario.
+  Por eso existe `make company` (`odoo/scripts/prepare_company.py`): le crea
+  el almacén y la deja como compañía por defecto del admin. `seed` depende de
+  ese target, así que corre solo.
+- **El seed elige la compañía por MONEDA, no `env.company`.** Y todos sus
+  `search` van acotados por compañía. Odoo prohíbe el cruce de compañías: un
+  `crm.team` con el mismo nombre en otra compañía revienta la creación del
+  pedido con "no company crossover is allowed".
+- **Verificar siempre con `make currency` antes de dar la demo por buena.**
+  579 pedidos en USD se ven idénticos a 579 en HNL hasta que alguien mira.
+- **Desde Odoo 19 la demo data NO se instala por defecto.** `--without-demo`
+  es el default; hay que pasar `--with-demo` explícitamente al crear la base.
+  Sin eso `product_template` queda en 0 y el seed muere sin productos.
+- **Una base creada sin demo data se bota y se recrea.** Odoo 19 tiene
+  `odoo module force-demo`, pero pelea con el entrypoint de la imagen oficial
+  (ver la regla de abajo), así que no vale la pena: `make reset` y de nuevo.
+- **El entrypoint de la imagen añade `--db_host/--db_port/--db_user/--db_password`
+  a TODA invocación de `odoo`.** `odoo server` y `odoo shell` los aceptan;
+  subcomandos nuevos como `odoo module` los rechazan y fallan. No agregar
+  targets que usen `odoo module`.
 - **`odoo.conf` no lleva credenciales de base a propósito.** El entrypoint de
   la imagen oficial inyecta `db_host`/`db_port`/`db_user`/`db_password` como
   argumentos, pero **solo si no están en el config file**: si los agregás ahí,
-  el archivo gana y `infra/.env` deja de tener efecto en silencio.
+  el archivo gana y `odoo/.env` deja de tener efecto en silencio.
+
+### Portabilidad entre versiones y ediciones
+
+La demo tiene que correr contra el Odoo de cualquier prospecto. Son dos
+problemas distintos y conviene no confundirlos:
+
+- **La edición casi no importa.** Las 17 tablas del contrato son todas de
+  módulos Community core (`base`, `sale`, `sales_team`, `product`, `uom`,
+  `stock`). Enterprise es un superconjunto: agrega módulos, nunca renombra ni
+  quita estos. Mientras la lista no crezca hacia tablas Enterprise-only, el
+  mismo pipeline sirve para ambas.
+- **La versión sí importa, y se absorbe en el cargador.** No en Silver.
+  `ingestion/batch/load_bronze.py` introspecciona `information_schema` del
+  Odoo origen y emite NULL para las columnas del contrato que esa versión no
+  tenga, así Bronze siempre sale con la misma forma.
+- **En el ORM, resolver los nombres de campo por introspección, nunca fijarlos.**
+  Ejemplo real: Odoo 19 renombró `res.users.groups_id` a `group_ids`, y el seed
+  reventaba. El patrón es
+  `campo = "group_ids" if "group_ids" in u._fields else "groups_id"`.
+- **Bronze aterriza todo como STRING a propósito.** El casteo es de Silver.
+  Así un cambio de tipo entre versiones de Odoo no rompe la carga.
 
 ### Esquema de Odoo (leído directo, sin ORM)
 
@@ -101,10 +193,10 @@ Estas no son preferencias, son cosas que rompen el pipeline.
 
 - **La publicación se crea ANTES del slot.** Al revés falla.
 - **La lista de tablas replicadas vive en un solo lugar**: la tabla temporal
-  `tablas_replicadas` de `postgres/lakeflow_setup.sql`, que alimenta tanto el
+  `tablas_replicadas` de `ingestion/cdc/lakeflow_setup.sql`, que alimenta tanto el
   `REPLICA IDENTITY` como la `CREATE PUBLICATION`. No duplicar la lista.
 - **El password de replicación no se quema en el `.sql`.** Entra como variable
-  de psql (`-v repl_password=...`) desde `REPL_PASSWORD` en `infra/.env`.
+  de psql (`-v repl_password=...`) desde `REPL_PASSWORD` en `odoo/.env`.
 - **Solo se soporta el plugin `pgoutput`.**
 - **No publicar el esquema completo.** Odoo tiene ~900 tablas; la publicación
   lista 17 a propósito. Agregar tablas es una decisión consciente, no un
@@ -117,17 +209,66 @@ Estas no son preferencias, son cosas que rompen el pipeline.
 - El gateway corre en **compute clásico y en modo continuo**; el pipeline de
   ingesta corre en **serverless y programado**. No se pueden invertir.
 
+### Workspace y carriles de ingesta
+
+- **El workspace de la demo es Free Edition: serverless-only.** El gateway de
+  Lakeflow Connect exige compute clásico, así que **el carril `cdc` no corre
+  ahí**. Para la demo se usa el carril `batch`.
+- **Lakebase no es una salida.** Se probó: su CDC nativo (Lakehouse Sync)
+  falla con `Lakebase CDF is not supported for catalogs using Default Storage`,
+  y Free Edition solo tiene default storage. Tampoco sirve como base de Odoo
+  (auth solo por OAuth de 1 h, rama de 512 MB, CDC a nivel de esquema).
+  No volver a proponerlo.
+- **Gold NO va dentro del pipeline declarativo.** Necesita constraints PK/FK y
+  las materialized views no los admiten. Es una desviación consciente de la
+  recomendación de Databricks, y está anotada en `databricks/src/sql/01_gold.sql`.
+
+### Idioma: inglés en el código, español en los COMMENT
+
+Esta división es deliberada y está fundamentada, no es gusto:
+
+- **Identificadores en inglés**: archivos, código Python, vistas de Silver,
+  tablas y columnas de Gold, funciones de Genie, claves del bundle y targets
+  del Makefile. Databricks **no publica** un estándar que exija inglés —solo
+  pide consistencia, minúsculas y snake_case—, pero el inglés es lo estándar
+  en ingeniería y el repo ya cumplía el resto.
+- **`COMMENT` y comentarios en español**: la documentación de Genie pide
+  metadatos en el idioma del usuario, y el usuario final es un gerente
+  comercial hondureño. Los `COMMENT` son la señal de entrada principal del
+  agente. **Nunca traducirlos al inglés "por consistencia".**
+- **Los sinónimos del Genie Agent NO son opcionales.** Genie usa los nombres de
+  columna, no solo los comentarios, para hacer matching contra la pregunta. Con
+  los identificadores en inglés y el gerente preguntando en español, el puente
+  son los sinónimos por columna. La lista mínima está al final de
+  `databricks/src/sql/02_genie.sql`; sin cargarla, la calidad de las respuestas
+  cae. Es el precio de tener el esquema en inglés, y se paga una sola vez.
+- **Bronze es intocable**: son los nombres literales del esquema de Odoo
+  (`sale_order`, `res_partner`, `product_template`). Ya están en inglés y
+  renombrarlos rompería el contrato con el origen.
+- **Los datos siguen en español** pase lo que pase: "Zona Norte", los
+  departamentos hondureños, los nombres de vendedores. Eso es contenido, no
+  esquema.
+
 ### Gold y Genie
 
+- **`LIMIT` no acepta un parámetro de función en Databricks.** Falla con
+  `INVALID_LIMIT_LIKE_EXPRESSION.IS_UNFOLDABLE`. En `02_genie.sql` el recorte
+  del top-N se hace con `ROW_NUMBER() OVER (...)` filtrado en un `WHERE`.
 - **Los `COMMENT` son funcionales, no documentación.** Genie los usa como
   contexto principal. Nunca quitarlos ni acortarlos "para limpiar".
 - **Los constraints PK/FK son informacionales pero necesarios**: Genie los usa
   para inferir joins.
-- **Nombres de negocio en español** en Gold: `zona`, `vendedor`, `gerente`,
-  `departamento`. Nunca exponer `team_id`, `user_id`, `state_id` hacia arriba.
-- `fct_ventas` está al **grano de línea de pedido**. Cualquier conteo de
-  pedidos usa `COUNT(DISTINCT pedido_id)`.
-- "Venta" siempre significa `subtotal` con `estado = 'sale'`. Las cotizaciones
+- **Nombres de negocio, no técnicos**, en Gold: `territory`, `salesperson`,
+  `manager`, `state`. Nunca exponer `team_id`, `user_id`, `state_id` hacia
+  arriba. El vocabulario español del gerente entra por los sinónimos del
+  agente, no por el nombre físico de la columna.
+- **`state` es el departamento de Honduras, no el estado del pedido.** El
+  estado del pedido es `order_status`. Las dos cosas traducen a "state" en
+  inglés y confundirlas rompe las respuestas de Genie: el `COMMENT` de cada una
+  lo aclara explícitamente y no debe borrarse.
+- `fact_sales` está al **grano de línea de pedido**. Cualquier conteo de
+  pedidos usa `COUNT(DISTINCT order_id)`.
+- "Venta" siempre significa `subtotal` con `order_status = 'sale'`. Las cotizaciones
   (`draft`) y los cancelados no son ventas.
 
 ## Convenciones
@@ -139,7 +280,7 @@ Estas no son preferencias, son cosas que rompen el pipeline.
 - Los scripts Python son de stdlib pura, sin dependencias externas. Si algo
   necesita una librería, primero justificarlo.
 - Un cambio en Silver que cambie nombres de columna obliga a revisar Gold y los
-  trusted assets de `03_genie.sql`. No dejarlos desincronizados.
+  trusted assets de `databricks/src/sql/02_genie.sql`. No dejarlos desincronizados.
 
 ## Qué NO hacer
 
@@ -147,13 +288,18 @@ Estas no son preferencias, son cosas que rompen el pipeline.
   descartó: la API se topa en 2-3 ops/seg por worker. Los scripts del carril
   por API (`odoo_probe.py`, `odoo_extract.py`) son para el app Flutter, otro
   proyecto, y **no están en este repo**.
+- **No agregar tablas al contrato "por si acaso".** Cada tabla nueva es más WAL
+  en el carril CDC y más costo de gateway. Odoo tiene ~900 tablas; las 17 de
+  `ingestion/contract.py` están elegidas.
 - **No agregar dependencias de módulos Enterprise de Odoo.** La demo tiene que
   correr en Community.
-- **No asumir que existe `l10n_hn`.** Verificar en la base antes de usarlo;
-  si no existe se usa el plan genérico con moneda HNL.
-- **No generalizar a multi-tenant ni multi-versión todavía.** Es deuda
-  deliberada: se hace cuando aparezca el segundo cliente y muestre en qué se
-  diferencia.
+- **No asumir que existe `l10n_hn`.** Verificado en Odoo 19: **sí existe**.
+  `make modules` lo detecta en `ir_module_module` y cae en `account` si falta,
+  así que no hay que fijarlo a mano — pero tampoco asumir que estará en otras
+  versiones o ediciones.
+- **No generalizar a multi-tenant todavía.** Es deuda deliberada: se hace
+  cuando aparezca el segundo cliente y muestre en qué se diferencia.
+  La multi-**versión** sí es requisito y ya está resuelta en el cargador.
 - **No exponer el 5432 a internet.** Security group restringido al rango de
   Databricks.
 

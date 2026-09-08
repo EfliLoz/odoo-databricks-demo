@@ -7,13 +7,13 @@
 --
 -- que equivale a:
 --
---   docker compose -f infra/docker-compose.yml exec -T db \
+--   docker compose -f odoo/docker-compose.yml exec -T db \
 --     psql -U odoo -d demo \
 --       -v repl_user=databricks_replication \
 --       -v repl_password='...' \
 --       -v repl_publication=databricks_pub \
 --       -v repl_slot=databricks_slot \
---     < postgres/lakeflow_setup.sql
+--     < ingestion/cdc/lakeflow_setup.sql
 --
 -- Los cuatro parámetros son obligatorios y salen de .env. El password NO está
 -- quemado en este archivo a propósito.
@@ -41,12 +41,13 @@
 \if :{?repl_password}   \else \set repl_password   '' \endif
 \if :{?repl_publication}\else \set repl_publication '' \endif
 \if :{?repl_slot}       \else \set repl_slot       '' \endif
+\if :{?tablas}          \else \set tablas          '' \endif
 
 SELECT format('DO $guard$ BEGIN RAISE EXCEPTION %L; END $guard$',
               'Faltan parámetros obligatorios (repl_user, repl_password, ' ||
-              'repl_publication, repl_slot). Corré `make cdc-setup` en vez de ' ||
+              'repl_publication, repl_slot, tablas). Corré `make cdc-setup` en vez de ' ||
               'invocar psql a mano.')
-WHERE '' IN (:'repl_user', :'repl_password', :'repl_publication', :'repl_slot')
+WHERE '' IN (:'repl_user', :'repl_password', :'repl_publication', :'repl_slot', :'tablas')
 \gexec
 
 \echo 'Base:' :DBNAME '| rol:' :repl_user '| publicación:' :repl_publication '| slot:' :repl_slot
@@ -60,7 +61,7 @@ DO $$
 BEGIN
   IF current_setting('wal_level') <> 'logical' THEN
     RAISE EXCEPTION
-      'wal_level = %, se necesita "logical". Arreglá el arranque del servidor (ver infra/docker-compose.yml) y recreá el contenedor: make db-recreate.',
+      'wal_level = %, se necesita "logical". Arreglá el arranque del servidor (ver odoo/docker-compose.yml) y recreá el contenedor: make db-recreate.',
       current_setting('wal_level');
   END IF;
   IF current_setting('max_replication_slots')::int < 1 THEN
@@ -78,32 +79,25 @@ END $$;
 -- que solo infla el WAL y el costo del gateway. Databricks recomienda 250
 -- tablas o menos por pipeline.
 --
--- Esta lista alimenta TANTO el replica identity COMO la publicación, para que
--- no se puedan desincronizar. Agregar una tabla acá es una decisión consciente:
--- revisá antes si Silver la necesita de verdad.
+-- La lista alimenta TANTO el replica identity COMO la publicación. Y viene de
+-- ingestion/contract.py, el mismo archivo que usa el carril batch, así que los
+-- dos carriles publican exactamente lo mismo. Agregar una tabla es una
+-- decisión consciente: se hace allá, no acá.
 -- ============================================================================
 
 DROP TABLE IF EXISTS tablas_replicadas;
 CREATE TEMP TABLE tablas_replicadas(tabla name PRIMARY KEY);
 
-INSERT INTO tablas_replicadas VALUES
-  ('sale_order'),          -- pedidos: cabecera, estado, montos computados
-  ('sale_order_line'),     -- grano de la tabla de hechos
-  ('res_partner'),         -- clientes, y el nombre de los usuarios
-  ('res_users'),           -- vendedores y gerentes (sin columna name, ver Silver)
-  ('res_company'),
-  ('res_country'),
-  ('res_country_state'),   -- departamentos de Honduras
-  ('res_currency'),
-  ('crm_team'),            -- zonas comerciales, con gerente en user_id
-  ('product_product'),     -- variantes (sin columna name, ver Silver)
-  ('product_template'),    -- nombre y precio de lista
-  ('product_category'),
-  ('product_pricelist'),
-  ('uom_uom'),
-  ('stock_quant'),         -- única fuente real de existencias
-  ('stock_location'),      -- filtro usage = 'internal'
-  ('stock_warehouse');
+-- La lista NO vive acá: llega en :tablas desde ingestion/contract.py, que es la
+-- fuente única. `make cdc-setup` la calcula con `python3 ingestion/contract.py
+-- --lista`. Así el carril CDC y el carril batch no se pueden desincronizar.
+INSERT INTO tablas_replicadas
+SELECT DISTINCT trim(t)::name
+FROM unnest(string_to_array(:'tablas', ',')) AS t
+WHERE trim(t) <> '';
+
+\echo '  tablas del contrato recibidas:'
+SELECT count(*) AS n_tablas FROM tablas_replicadas;
 
 -- Falla si alguna tabla de la lista no existe en la base (típico: falta
 -- instalar el módulo que la crea).

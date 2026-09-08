@@ -30,35 +30,35 @@ código:
 
 ## Estructura
 
+Tres dominios autocontenidos. Lo de Odoo no se mezcla con lo de Databricks:
+
 ```
 .
-├── Makefile                     ← todos los comandos del RUNBOOK, con `make help`
-├── README.md
-├── CLAUDE.md                    ← contexto para Claude Code
-├── RUNBOOK.md                   ← el paso a paso completo, 9 fases
-├── infra/
-│   ├── docker-compose.yml       Odoo 19 + Postgres 16 con replicación lógica
-│   ├── .env.example             credenciales y puertos (copiar a .env)
+├── Makefile                     ← todos los comandos, con `make help`
+│
+├── odoo/                        EL SANDBOX
+│   ├── docker-compose.yml         Odoo 19 + Postgres 16
+│   ├── .env.example               credenciales y puertos
 │   ├── config/odoo.conf
-│   └── addons/                  montado en /mnt/extra-addons, vacío a propósito
-├── odoo/
-│   ├── localize_hn.py           país y moneda HNL, ANTES de instalar account
-│   └── seed_ventas.py           ~900 pedidos, 4 zonas, departamentos de HN
-├── postgres/
-│   └── lakeflow_setup.sql       usuario, replica identity, publicación, slot
-└── databricks/
-    ├── 01_silver.sql            tipado, jsonb, joins del ORM
-    ├── 02_gold.sql              modelo estrella + comentarios + constraints
-    └── 03_genie.sql             trusted assets e instrucciones del agente
+│   ├── addons/
+│   └── scripts/                   localize_hn.py, seed_sales.py
+│
+├── databricks/                  EL BUNDLE  (bundle root)
+│   ├── databricks.yml             variables y targets dev/prod
+│   ├── resources/                 pipeline + job
+│   └── src/
+│       ├── pipeline/              7 materialized views de Silver
+│       └── sql/                   00_setup, 01_gold, 02_genie
+│
+└── ingestion/                     EL PUENTE
+    ├── contract.py                QUÉ se extrae de Odoo: fuente única
+    ├── cdc/lakeflow_setup.sql     carril CDC (workspace de pago)
+    └── batch/load_bronze.py       carril batch (Free Edition)
 ```
 
-Los `.sql` de `databricks/` se corren en un notebook **en orden numérico**:
-`02` depende de las vistas que crea `01`, y `03` de las tablas que crea `02`.
-
-> **No están en este repo:** `odoo_probe.py` y `odoo_extract.py`, el carril por
-> API. Viven en el proyecto del app Flutter, que es el que sigue necesitando la
-> API porque escribe pedidos y tiene que funcionar contra clientes en SaaS.
-> Para esta demo están fuera del camino crítico — ver *Limitaciones conocidas*.
+`ingestion/` es lo único que conoce los dos lados: define el contrato de las 17
+tablas y lo llena por cualquiera de los dos carriles. Silver no sabe cuál
+corrió, así que cambiar de carril no toca Gold, dashboard ni Genie.
 
 ## Arranque rápido
 
@@ -66,10 +66,18 @@ El detalle completo está en [RUNBOOK.md](RUNBOOK.md). La versión corta, desde
 la raíz del repo:
 
 ```bash
-make env          # crea infra/.env a partir del ejemplo — editá las credenciales
-make bootstrap    # Postgres + base con demo data + moneda HNL + contabilidad
+make env          # crea odoo/.env a partir del ejemplo
+make bootstrap    # Postgres + base con demo data + moneda HNL + módulos
 make seed         # ~900 pedidos en 18 meses, 3-5 min
-make cdc-setup    # usuario de replicación, publicación y slot
+make load-bronze # carril batch: las 17 tablas -> bronze_pg
+```
+
+Y del lado de Databricks:
+
+```bash
+databricks bundle validate --strict --target dev --profile FREE
+databricks bundle deploy            --target dev --profile FREE
+databricks bundle run medallion     --target dev --profile FREE
 ```
 
 `make help` lista todos los targets. Los tres pasos de `bootstrap` van en ese
@@ -84,16 +92,29 @@ make slots        # el slot creado, y cuánto WAL está reteniendo
 make verify-cdc   # conteos de origen, para contrastar contra bronze_pg
 ```
 
-Después, en Databricks: crear la conexión y el pipeline de Lakeflow Connect, y
-correr `databricks/01_silver.sql`, `02_gold.sql` y `03_genie.sql` en ese orden.
+Del lado de Databricks ya no se corren `.sql` sueltos: el orden es una
+dependencia declarada en el job del bundle.
+
+```bash
+make bundle-validate    # entra a databricks/ y valida en modo estricto
+make bundle-deploy
+make bundle-run         # setup -> silver -> gold -> genie
+```
 
 ## Flujo de datos
 
 ```
-Odoo 19 → PostgreSQL → Lakeflow Connect (CDC) → bronze_pg → silver → gold
-                                                                        ↓
-                                                        Dashboard AI/BI + Genie
+Odoo → PostgreSQL ──┬── carril cdc    (Lakeflow Connect) ──┐
+                    └── carril batch  (CSV + COPY INTO)  ──┴→ bronze_pg
+                                                                 ↓
+                                                          silver → gold
+                                                                 ↓
+                                                  Dashboard AI/BI + Genie
 ```
+
+Los dos carriles llenan el mismo contrato (`ingestion/contract.py`), así que
+Silver no sabe cuál corrió. En un workspace Free Edition solo corre `batch`:
+el gateway del carril CDC exige compute clásico.
 
 ## Decisiones de arquitectura
 
