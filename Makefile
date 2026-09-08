@@ -140,7 +140,7 @@ currency:  ## Verificar la moneda y el plan de cuentas de cada compañía
 
 company:  ## Preparar la compañía de la demo (almacén y acceso del admin)
 	$(COMPOSE) run --rm -T odoo odoo shell -d $(ODOO_DB) --no-http \
-	  < odoo/scripts/preparar_company.py
+	  < odoo/scripts/prepare_company.py
 
 seed: company  ## ~900 pedidos, 4 zonas, departamentos de HN (3-5 min)
 	$(COMPOSE) run --rm -T odoo odoo shell -d $(ODOO_DB) --no-http < odoo/scripts/seed_sales.py

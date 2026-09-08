@@ -132,6 +132,7 @@ TABLES = {
         "id",
         "product_id",
         "location_id",
+        "company_id",         # la demo filtra a UNA compañía: ver silver_inventory
         "quantity",           # única fuente real: qty_available no existe
         "reserved_quantity",
     ],

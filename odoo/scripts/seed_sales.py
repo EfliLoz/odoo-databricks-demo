@@ -140,7 +140,7 @@ def get_user(name):
 # y no vale la pena acoplarse.
 equipos, plantilla = {}, {}
 for zona, deptos in ZONAS.items():
-    gerente = get_user(MANAGERS[zone])
+    gerente = get_user(GERENTES[zona])
     # Acotado por compañía: un equipo con el mismo nombre en otra compañía no
     # sirve, y usarlo dispara el error de cruce de compañías de Odoo.
     eq = env["crm.team"].search(
@@ -154,7 +154,7 @@ for zona, deptos in ZONAS.items():
     else:
         eq.user_id = gerente
     equipos[zona] = eq
-    plantilla[zona] = [get_user(v) for v in SALESPEOPLE[zone]]
+    plantilla[zona] = [get_user(v) for v in VENDEDORES[zona]]
 print(f"Zonas listas: {', '.join(equipos)}")
 
 depto_a_zona = {d: z for z, ds in ZONAS.items() for d in ds}
@@ -193,6 +193,63 @@ if not productos:
     raise SystemExit(
         f"No hay productos vendibles para {company.name}. "
         f"¿Cargaste la demo data con --with-demo?")
+
+# --- 5b. Inventario ---------------------------------------------------------
+# La demo data de Odoo deja las existencias en OTRA compañía, así que la de la
+# demo nace con el almacén vacío. Sin esto, Silver filtra por compañía y el
+# inventario sale en cero: se cae la pregunta "¿qué se me va a acabar?", que es
+# de las que mejor funcionan en vivo.
+#
+# Se siembran cantidades deliberadamente desparejas para que haya productos en
+# riesgo real de quiebre y otros sobrados. Un inventario plano no cuenta nada.
+almacen = env["stock.warehouse"].search([("company_id", "=", company.id)], limit=1)
+if not almacen:
+    raise SystemExit(
+        f"{company.name} no tiene almacén. Corré `make company` antes del seed.")
+
+ubicacion = almacen.lot_stock_id
+existentes = env["stock.quant"].search_count([
+    ("company_id", "=", company.id), ("location_id", "=", ubicacion.id),
+])
+if existentes:
+    print(f"Inventario ya sembrado en {almacen.name}: {existentes} quants")
+else:
+    # Solo productos ALMACENABLES: Odoo rechaza quants para consumibles y
+    # servicios ("Quants cannot be created for consumables or services").
+    # Odoo 18 reemplazó type = 'product' por is_storable, así que se resuelve
+    # por introspección en vez de fijar una versión.
+    Producto = env["product.product"]
+    if "is_storable" in Producto._fields:
+        almacenables = productos.filtered(lambda p: p.is_storable)
+    else:
+        almacenables = productos.filtered(lambda p: p.type == "product")
+    if not almacenables:
+        print("  ningún producto almacenable: se omite la siembra de inventario")
+
+    Quant = env["stock.quant"].with_context(inventory_mode=True)
+    sembrados = 0
+    for i, prod in enumerate(almacenables):
+        # Perfil de existencias: ~1 de cada 6 productos queda escaso a
+        # propósito, el resto en rangos normales.
+        if i % 6 == 0:
+            cantidad = random.randint(0, 8)        # riesgo de quiebre
+        elif i % 6 == 1:
+            cantidad = random.randint(9, 30)       # cobertura corta
+        else:
+            cantidad = random.randint(40, 400)     # sobrado
+        quant = Quant.create({
+            "product_id": prod.id,
+            "location_id": ubicacion.id,
+            "inventory_quantity": cantidad,
+        })
+        # En Odoo 17+ el ajuste se aplica con action_apply_inventory. Se
+        # resuelve por introspección: el nombre cambió entre versiones.
+        if hasattr(quant, "action_apply_inventory"):
+            quant.action_apply_inventory()
+        sembrados += 1
+    env.cr.commit()
+    print(f"Inventario sembrado en {almacen.name}: {sembrados} de "
+          f"{len(productos)} productos (solo los almacenables)")
 
 # --- 6. Pedidos -------------------------------------------------------------
 # Se borra la tanda anterior (todas llevan client_order_ref = SEED-*) para que

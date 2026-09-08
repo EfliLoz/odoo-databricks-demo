@@ -1,0 +1,148 @@
+# El Genie Agent, como código.
+#
+# `genie_spaces` es un tipo de recurso de Declarative Automation Bundles, así
+# que el agente —sus fuentes, instrucciones, sinónimos y preguntas de muestra—
+# vive versionado acá y no configurado a mano en la UI. Eso importa: la
+# configuración hecha por UI se pierde si alguien recrea el agente, y no hay
+# forma de revisarla en un pull request.
+#
+# El `serialized_space` va inline en YAML (no en un .geniespace.json aparte) a
+# propósito: así las variables del bundle interpolan y el agente de `dev`
+# apunta a gold_dev mientras el de `prod` apunta a gold, sin duplicar el
+# archivo.
+
+resources:
+  genie_spaces:
+    ventas:
+      title: Ventas Honduras
+      description: >-
+        Responde preguntas de negocio sobre ventas confirmadas e inventario de
+        la operación en Honduras: desempeño por zona y gerente, ranking de
+        vendedores, productos más vendidos, cobertura por departamento y riesgo
+        de quiebre de stock.
+      warehouse_id: ${var.warehouse_id}
+      parent_path: /Workspace/Users/efli95.ealc@gmail.com/genie
+
+      serialized_space:
+        version: 2
+
+        config:
+          # Ordenadas por id, que es obligatorio.
+          sample_questions:
+            - id: "10000000000000000000000000000001"
+              question: ["¿Cómo van las ventas por zona este año?"]
+            - id: "10000000000000000000000000000002"
+              question: ["¿Quiénes son los cinco mejores vendedores?"]
+            - id: "10000000000000000000000000000003"
+              question: ["¿Qué productos se venden más en la Zona Norte?"]
+            - id: "10000000000000000000000000000004"
+              question: ["¿Cómo vamos contra el año pasado?"]
+            - id: "10000000000000000000000000000005"
+              question: ["¿En qué departamentos estamos vendiendo menos?"]
+            - id: "10000000000000000000000000000006"
+              question: ["¿Qué productos están en riesgo de quiebre?"]
+            - id: "10000000000000000000000000000007"
+              question: ["¿Qué clientes llevan más de dos meses sin comprarme?"]
+
+        data_sources:
+          # La metric view es la fuente gobernada de ventas: ya trae el filtro
+          # de pedido confirmado y las definiciones de venta y ticket promedio,
+          # con los nombres en español que usa el gerente.
+          #
+          # A propósito NO se adjuntan fact_sales ni sales_metrics: tener la
+          # vista base junto a la metric view hace que Genie vea filas sin
+          # agregar y tenga que re-derivar la lógica.
+          metric_views:
+            - identifier: ${var.catalog}.${var.gold_schema}.ventas
+              column_configs:
+                # Ordenadas por column_name, que es obligatorio.
+                # entity_matching solo donde el gerente nombra el valor
+                # literalmente. Nunca en ids, fechas ni medidas.
+                - column_name: Categoria
+                  enable_entity_matching: true
+                  enable_format_assistance: true
+                - column_name: Ciudad
+                  enable_entity_matching: true
+                - column_name: Cliente
+                  enable_entity_matching: true
+                - column_name: Departamento
+                  description:
+                    - >-
+                      División geográfica de Honduras del cliente (Cortés,
+                      Francisco Morazán, Atlántida...). NO es un área de la
+                      empresa ni el estado de un pedido.
+                  enable_entity_matching: true
+                  enable_format_assistance: true
+                - column_name: Gerente
+                  description:
+                    - Gerente responsable de la zona comercial.
+                  enable_entity_matching: true
+                  enable_format_assistance: true
+                - column_name: Producto
+                  enable_entity_matching: true
+                - column_name: Vendedor
+                  description:
+                    - Vendedor que levantó el pedido en campo.
+                  enable_entity_matching: true
+                  enable_format_assistance: true
+                - column_name: Zona
+                  description:
+                    - >-
+                      Zona comercial (equipo de ventas): Zona Norte, Zona
+                      Centro, Zona Sur, Zona Occidente.
+                  enable_entity_matching: true
+                  enable_format_assistance: true
+
+          # El inventario no está en la metric view, y la pregunta de riesgo de
+          # quiebre lo necesita. Ordenadas por identifier.
+          tables:
+            - identifier: ${var.catalog}.${var.gold_schema}.dim_product
+            - identifier: ${var.catalog}.${var.gold_schema}.fact_inventory
+              column_configs:
+                - column_name: available
+                  description:
+                    - >-
+                      Cantidad disponible: existencia menos la reservada para
+                      pedidos pendientes. Es la que importa para saber si algo
+                      se va a acabar.
+                - column_name: warehouse
+                  enable_entity_matching: true
+
+        instructions:
+          # Un solo bloque de texto: la API admite como máximo uno.
+          # Se usa solo para lo que no se puede codificar en metadatos.
+          text_instructions:
+            - id: "30000000000000000000000000000001"
+              content:
+                - "## PURPOSE"
+                - "- Ventas confirmadas e inventario de la operación en Honduras."
+                - "- El usuario es un gerente comercial: respondé SIEMPRE en español y sin jerga técnica."
+                - ""
+                - "## DISAMBIGUATION"
+                - "- \"Departamento\" es la división geográfica de Honduras del cliente, no un área de la empresa ni el estado de un pedido."
+                - "- \"Zona\" es el equipo comercial, y cada una tiene un gerente."
+                - "- Si no dan rango de fechas, usá el año en curso y decilo en la respuesta."
+                - ""
+                - "## DATA QUALITY NOTES"
+                - "- La metric view ventas ya excluye cotizaciones y pedidos cancelados. No hace falta filtrar por estado."
+                - "- fact_inventory NO tiene fecha: es una foto del momento, no una serie histórica."
+                - ""
+                - "## Instructions you must follow when providing summaries"
+                - "- Los montos están en lempiras (HNL). Mostralos con separador de miles."
+                - "- Indicá siempre el período que usaste."
+
+          # Enseñan la FORMA de consulta, no la respuesta a un benchmark.
+          # Ordenadas por id. Toda columna va calificada con su fuente.
+          example_question_sqls:
+            - id: "20000000000000000000000000000001"
+              question: ["¿Cómo van las ventas por zona?"]
+              sql:
+                - "SELECT ventas.`Zona`, ventas.`Gerente`, MEASURE(ventas.`Pedidos`) AS pedidos, MEASURE(ventas.`Venta`) AS venta FROM ${var.catalog}.${var.gold_schema}.ventas GROUP BY ventas.`Zona`, ventas.`Gerente` ORDER BY venta DESC"
+            - id: "20000000000000000000000000000002"
+              question: ["¿Cómo vamos contra el año pasado?"]
+              sql:
+                - "SELECT ventas.`Mes` AS mes, SUM(CASE WHEN ventas.`Anio` = YEAR(current_date()) THEN MEASURE(ventas.`Venta`) END) AS venta_actual, SUM(CASE WHEN ventas.`Anio` = YEAR(current_date()) - 1 THEN MEASURE(ventas.`Venta`) END) AS venta_anterior FROM ${var.catalog}.${var.gold_schema}.ventas GROUP BY ventas.`Mes`, ventas.`Anio` ORDER BY mes"
+            - id: "20000000000000000000000000000003"
+              question: ["¿Qué productos están en riesgo de quiebre?"]
+              sql:
+                - "SELECT dim_product.product, fact_inventory.warehouse, fact_inventory.available FROM ${var.catalog}.${var.gold_schema}.fact_inventory JOIN ${var.catalog}.${var.gold_schema}.dim_product ON dim_product.product_id = fact_inventory.product_id ORDER BY fact_inventory.available ASC"

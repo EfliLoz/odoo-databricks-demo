@@ -15,5 +15,11 @@ AS SELECT
 FROM ${catalog}.${bronze_schema}.stock_quant q
 JOIN      ${catalog}.${bronze_schema}.stock_location  loc ON loc.id = q.location_id
 LEFT JOIN ${catalog}.${bronze_schema}.stock_warehouse w   ON w.id   = loc.warehouse_id
+JOIN      ${catalog}.${bronze_schema}.res_company     co  ON co.id  = q.company_id
+JOIN      ${catalog}.${bronze_schema}.res_currency    ccur ON ccur.id = co.currency_id
 WHERE loc.usage = 'internal'
+  -- Mismo filtro de compañía que silver_orders. Sin esto el inventario sale de
+  -- OTRA compañía que la demo data de Odoo deja creada, y el dashboard cruza
+  -- ventas de una empresa con existencias de otra sin ningún error visible.
+  AND ccur.name = '${demo_currency}'
 GROUP BY 1, 2, 3;
